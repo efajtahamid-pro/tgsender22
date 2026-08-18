@@ -12,19 +12,18 @@ def start_worker(target, name):
     print(f"✅ {name} started in background.")
 
 if __name__ == '__main__':
-    # Import the worker run functions inside the main block
-    # to avoid circular imports during app initialization.
-    from campaign_worker import run as run_campaign_worker
-    from reply_worker import run as run_reply_worker
+    # 0. Synchronize Database Schema (Drop and Recreate)
+    from migrate import reset_database
+    reset_database()
 
-    print("🚀 Starting TG Platform...")
-    
     # 1. Start the Campaign Worker
+    from campaign_worker import run as run_campaign_worker
     start_worker(run_campaign_worker, "CampaignWorker")
     
     # 2. Start the Reply Worker
+    from reply_worker import run as run_reply_worker
     start_worker(run_reply_worker, "ReplyWorker")
 
     # 3. Start the Flask Web Server & Socket.IO
-    print("🌐 Starting Web Server on http://localhost:5000")
+    print("🌐 Starting Web Server on http://0.0.0.0:5000")
     socketio.run(app, host='0.0.0.0', port=5000, debug=app.config.get('DEBUG', False))
