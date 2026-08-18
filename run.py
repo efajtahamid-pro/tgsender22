@@ -12,11 +12,6 @@ def start_worker(target, name):
     print(f"✅ {name} started in background.")
 
 if __name__ == '__main__':
-    # 0. Synchronize Database Schema (Drop and Recreate)
-    # Comment this out or remove it after the first successful deployment to preserve data!
-    # from migrate import reset_database
-    # reset_database()
-
     # 1. Start the Campaign Worker
     from campaign_worker import run as run_campaign_worker
     start_worker(run_campaign_worker, "CampaignWorker")
