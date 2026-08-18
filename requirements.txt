@@ -15,3 +15,4 @@ qrcode[pil]==7.4.2
 pandas==2.1.4
 gunicorn==21.2.0
 psycopg2-binary
+PySocks==1.7.1
