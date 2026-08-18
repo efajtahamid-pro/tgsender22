@@ -10,9 +10,8 @@ class Config:
 
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///instance/platform.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        'connect_args': {'check_same_thread': False}
-    }
+    # Removed check_same_thread from here to prevent PostgreSQL crashes
+    SQLALCHEMY_ENGINE_OPTIONS = {}
 
     API_ID = int(os.getenv('API_ID', 0))
     API_HASH = os.getenv('API_HASH', '')
