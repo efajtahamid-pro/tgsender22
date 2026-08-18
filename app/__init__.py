@@ -18,11 +18,17 @@ def create_app(config_name=None):
     app = Flask(__name__)
     app.config.from_object(config_map[config_name])
 
-    # Configure SQLite NullPool if using SQLite (required for safe background threads)
+    # Configure Database Engine Options dynamically
     if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
+        # SQLite requires NullPool and check_same_thread=False for background workers
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'poolclass': NullPool,
             'connect_args': {'check_same_thread': False}
+        }
+    else:
+        # PostgreSQL uses standard QueuePool
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'pool_pre_ping': True
         }
 
     # Initialize extensions
@@ -45,14 +51,15 @@ def create_app(config_name=None):
     # Register custom error handlers
     register_error_handlers(app)
 
-    # SQLite WAL Mode setup (Allows concurrent reads while writing)
-    with app.app_context():
-        @event.listens_for(db.engine, 'connect')
-        def set_sqlite_pragma(dbapi_connection, connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute('PRAGMA journal_mode=WAL')
-            cursor.execute('PRAGMA synchronous=NORMAL')
-            cursor.close()
+    # SQLite WAL Mode setup (Only applies if using SQLite)
+    if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
+        with app.app_context():
+            @event.listens_for(db.engine, 'connect')
+            def set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute('PRAGMA journal_mode=WAL')
+                cursor.execute('PRAGMA synchronous=NORMAL')
+                cursor.close()
 
     # User loader for Flask-Login
     @login_manager.user_loader
