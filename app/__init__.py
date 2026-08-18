@@ -18,8 +18,14 @@ def create_app(config_name=None):
     app = Flask(__name__)
     app.config.from_object(config_map[config_name])
 
+    # Fix Render's 'postgres://' format to 'postgresql://' for SQLAlchemy
+    db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    if db_uri.startswith('postgres://'):
+        db_uri = db_uri.replace('postgres://', 'postgresql://', 1)
+        app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
+
     # Configure Database Engine Options dynamically
-    if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
+    if 'sqlite' in db_uri:
         # SQLite requires NullPool and check_same_thread=False for background workers
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'poolclass': NullPool,
@@ -52,7 +58,7 @@ def create_app(config_name=None):
     register_error_handlers(app)
 
     # SQLite WAL Mode setup (Only applies if using SQLite)
-    if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
+    if 'sqlite' in db_uri:
         with app.app_context():
             @event.listens_for(db.engine, 'connect')
             def set_sqlite_pragma(dbapi_connection, connection_record):
