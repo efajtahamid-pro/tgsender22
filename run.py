@@ -13,8 +13,9 @@ def start_worker(target, name):
 
 if __name__ == '__main__':
     # 0. Synchronize Database Schema (Drop and Recreate)
-    from migrate import reset_database
-    reset_database()
+    # Comment this out or remove it after the first successful deployment to preserve data!
+    # from migrate import reset_database
+    # reset_database()
 
     # 1. Start the Campaign Worker
     from campaign_worker import run as run_campaign_worker
@@ -26,4 +27,10 @@ if __name__ == '__main__':
 
     # 3. Start the Flask Web Server & Socket.IO
     print("🌐 Starting Web Server on http://0.0.0.0:5000")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=app.config.get('DEBUG', False))
+    socketio.run(
+        app, 
+        host='0.0.0.0', 
+        port=int(os.getenv('PORT', 5000)), 
+        debug=app.config.get('DEBUG', False),
+        allow_unsafe_werkzeug=True  # Required for Werkzeug 3.x in production
+    )
