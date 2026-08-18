@@ -1,0 +1,146 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0"><i class="bi bi-phone-fill me-2"></i> Telegram Accounts</h2>
+    <div>
+        <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#singleModal" {% if not free_proxy_available %}disabled{% endif %}><i class="bi bi-plus-circle me-1"></i> Add Single</button>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#batchModal" {% if not free_proxy_available %}disabled{% endif %}><i class="bi bi-upload me-1"></i> Batch Add</button>
+    </div>
+</div>
+
+{% if not free_proxy_available %}
+<div class="alert alert-danger" role="alert">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i> Free proxy not available. Please add more proxies before adding new accounts.
+</div>
+{% endif %}
+
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Phone</th>
+                    <th>Proxy</th>
+                    <th>Verified</th>
+                    <th style="min-width: 150px;">Daily Usage</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in accounts %}
+                <tr>
+                    <td class="fw-bold">{{ a.phone }}</td>
+                    <td>{% if a.proxy %}{{ a.proxy.host }}:{{ a.proxy.port }}{% else %}<span class="text-muted">None</span>{% endif %}</td>
+                    <td>
+                        {% if a.is_verified %}
+                        <span class="badge bg-success rounded-pill"><i class="bi bi-check-circle-fill me-1"></i> Verified</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark rounded-pill"><i class="bi bi-exclamation-triangle-fill me-1"></i> Unverified</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="progress" style="height: 20px;">
+                            <div class="progress-bar bg-{{ 'danger' if a.daily_sent >= a.daily_limit else 'primary' }}" 
+                                 role="progressbar" 
+                                 data-daily="{{ a.daily_sent }}" 
+                                 data-limit="{{ a.daily_limit or 1 }}">
+                                {{ a.daily_sent }}/{{ a.daily_limit }}
+                            </div>
+                        </div>
+                    </td>
+                    <td class="text-end">
+                        {% if not a.is_verified %}
+                        <a href="{{ url_for('admin.verify_account', id=a.id) }}" class="btn btn-sm btn-success"><i class="bi bi-shield-check me-1"></i> Verify</a>
+                        {% endif %}
+                        <form method="POST" action="{{ url_for('admin.toggle_account', id=a.id) }}" style="display:inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-{{ 'warning' if a.is_active else 'success' }}">
+                                {{ 'Disable' if a.is_active else 'Enable' }}
+                            </button>
+                        </form>
+                        <form method="POST" action="{{ url_for('admin.delete_account', id=a.id) }}" style="display:inline" onsubmit="return confirm('Delete account? All associated data will be lost.')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal fade" id="singleModal">
+    <div class="modal-dialog">
+        <div class="modal-content border-0 shadow">
+            <form method="POST" action="{{ url_for('admin.add_single_account') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-header bg-primary text-white border-0">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i> Add Single Account</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Phone Number (with country code)</label>
+                        <input type="text" name="phone" class="form-control" placeholder="15551234567" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">API ID</label>
+                        <input type="text" name="api_id" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">API Hash</label>
+                        <input type="text" name="api_hash" class="form-control" required>
+                    </div>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="submit" class="btn btn-primary w-100 py-2">Add Account</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="batchModal">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content border-0 shadow">
+            <form method="POST" action="{{ url_for('admin.batch_add_accounts') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-header bg-primary text-white border-0">
+                    <h5 class="modal-title"><i class="bi bi-upload me-2"></i> Batch Add Accounts</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted">Enter a single API ID and API Hash, followed by a list of phone numbers (one per line). All numbers will use the same API credentials.</p>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">API ID</label>
+                            <input type="text" name="api_id" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">API Hash</label>
+                            <input type="text" name="api_hash" class="form-control" required>
+                        </div>
+                    </div>
+                    <label class="form-label fw-bold">Phone Numbers (one per line)</label>
+                    <textarea name="phones" class="form-control" rows="10" placeholder="15551234567&#10;15557654321" required></textarea>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="submit" class="btn btn-primary w-100 py-2">Add Batch & Assign Proxies</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.querySelectorAll('.progress-bar[data-daily]').forEach(bar => {
+        const daily = parseInt(bar.getAttribute('data-daily') || 0);
+        const limit = parseInt(bar.getAttribute('data-limit') || 1);
+        const width = (daily / limit * 100).toFixed(0);
+        bar.style.width = width + '%';
+    });
+</script>
+{% endblock %}

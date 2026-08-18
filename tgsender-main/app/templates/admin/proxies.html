@@ -1,0 +1,130 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0"><i class="bi bi-hdd-network-fill me-2"></i> Proxies</h2>
+    <div>
+        <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#singleModal"><i class="bi bi-plus-circle me-1"></i> Add Single</button>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#bulkModal"><i class="bi bi-upload me-1"></i> Bulk Add</button>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>ID</th>
+                    <th>Type</th>
+                    <th>Host:Port</th>
+                    <th>Username</th>
+                    <th>Accounts</th>
+                    <th>Status</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in proxies %}
+                <tr>
+                    <td>{{ p.id }}</td>
+                    <td><span class="badge bg-secondary">{{ p.proxy_type }}</span></td>
+                    <td class="fw-bold">{{ p.host }}:{{ p.port }}</td>
+                    <td>{{ p.username or '-' }}</td>
+                    <td>
+                        <span class="badge bg-{{ 'danger' if p.accounts.count() >= 5 else 'success' }}">{{ p.accounts.count() }} / 5</span>
+                        {% if p.accounts.count() > 0 %}
+                        <div class="mt-2">
+                            {% for a in p.accounts %}
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-{{ 'success' if a.is_active else 'danger' }} me-2">{{ a.phone }}</span>
+                                <form method="POST" action="{{ url_for('admin.delete_account', id=a.id) }}" style="display:inline" onsubmit="return confirm('Delete this account? All associated data will be lost.')">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-sm btn-outline-danger p-0 px-1"><i class="bi bi-x"></i></button>
+                                </form>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td><span class="badge bg-{{ 'success' if p.is_active else 'danger' }}">{{ 'Active' if p.is_active else 'Inactive' }}</span></td>
+                    <td class="text-end">
+                        <form method="POST" action="{{ url_for('admin.toggle_proxy', id=p.id) }}" style="display:inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-warning">{{ 'Disable' if p.is_active else 'Enable' }}</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('admin.delete_proxy', id=p.id) }}" style="display:inline" onsubmit="return confirm('Delete?')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal fade" id="singleModal">
+    <div class="modal-dialog">
+        <div class="modal-content border-0 shadow">
+            <form method="POST" action="{{ url_for('admin.add_single_proxy') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-header bg-primary text-white border-0">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i> Add Single Proxy</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Type</label>
+                        <select name="type" class="form-control">
+                            <option value="socks5">socks5</option>
+                            <option value="http">http</option>
+                            <option value="mtproto">mtproto</option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8 mb-3">
+                            <label class="form-label fw-bold">Host</label>
+                            <input type="text" name="host" class="form-control" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label fw-bold">Port</label>
+                            <input type="number" name="port" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Username (Optional)</label>
+                        <input type="text" name="username" class="form-control">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Password (Optional)</label>
+                        <input type="password" name="password" class="form-control">
+                    </div>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="submit" class="btn btn-primary w-100 py-2">Add Proxy</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="bulkModal">
+    <div class="modal-dialog">
+        <div class="modal-content border-0 shadow">
+            <form method="POST" action="{{ url_for('admin.batch_add_proxies') }}" enctype="multipart/form-data">
+                <div class="modal-header bg-primary text-white border-0">
+                    <h5 class="modal-title"><i class="bi bi-upload me-2"></i> Bulk Add Proxies</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted">Upload a CSV file with headers: host, port, username, password, type</p>
+                    <input type="file" name="file" class="form-control" accept=".csv" required>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="submit" class="btn btn-primary w-100 py-2">Upload CSV</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

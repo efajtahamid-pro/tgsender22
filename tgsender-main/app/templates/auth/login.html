@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white text-center"><h4><i class="bi bi-box-arrow-in-right"></i> Login</h4></div>
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    {% if require_2fa %}
+                        <input type="hidden" name="username" value="{{ username }}">
+                        <div class="alert alert-info">2FA code required for admin login.</div>
+                        <div class="mb-3">
+                            <label>Authenticator Code</label>
+                            <input type="text" name="totp_code" class="form-control text-center" pattern="[0-9]{6}" maxlength="6" required autofocus>
+                        </div>
+                    {% else %}
+                        <div class="mb-3">
+                            <label>Username</label>
+                            <input type="text" name="username" class="form-control" required autofocus>
+                        </div>
+                        <div class="mb-3">
+                            <label>Password</label>
+                            <input type="password" name="password" class="form-control" required>
+                        </div>
+                    {% endif %}
+                    <button type="submit" class="btn btn-primary w-100">Login</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

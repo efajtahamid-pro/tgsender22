@@ -1,0 +1,103 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0"><i class="bi bi-megaphone-fill me-2"></i> Campaigns</h2>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#campModal"><i class="bi bi-plus-circle me-1"></i> Create Campaign</button>
+</div>
+
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Name</th>
+                    <th>Assigned To</th>
+                    <th>Selected Accounts</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in campaigns %}
+                <tr>
+                    <td class="fw-bold">{{ c.name }}</td>
+                    <td>{{ c.employee.username if c.employee_id else 'Unassigned' }}</td>
+                    <td>
+                        {% if c.selected_accounts %}
+                            <span class="badge bg-info">{{ c.selected_accounts|length }} accounts</span>
+                        {% else %}
+                            <span class="text-muted">None selected</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="badge bg-{{ 'success' if c.status == 'completed' else 'warning' if c.status == 'running' else 'secondary' }}">{{ c.status }}</span></td>
+                    <td>
+                        <a href="{{ url_for('admin.campaign_detail', id=c.id) }}" class="btn btn-sm btn-info"><i class="bi bi-eye"></i> Admin View</a>
+                        {% if c.employee_id %}
+                        <a href="{{ url_for('employee.campaign_detail', id=c.id) }}" class="btn btn-sm btn-secondary"><i class="bi bi-chat-text"></i> Open Chat View</a>
+                        {% endif %}
+                        <form method="POST" action="{{ url_for('admin.delete_campaign', id=c.id) }}" style="display:inline" onsubmit="return confirm('Delete?')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal fade" id="campModal">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content border-0 shadow">
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-header bg-primary text-white border-0">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i> Create Campaign</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Campaign Name</label>
+                        <input type="text" name="name" class="form-control" placeholder="My Marketing Campaign" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Message Variations (One per line)</label>
+                        <textarea name="message" class="form-control" rows="5" placeholder="Hello! This is message variation 1.&#10;Hi! This is message variation 2.&#10;Hey there! This is variation 3." required></textarea>
+                        <small class="text-muted">The bot will randomly pick one line per recipient to prevent spam.</small>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Delay (seconds)</label>
+                            <input type="number" name="delay" class="form-control" value="2">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold">Daily Limit (per account)</label>
+                            <input type="number" name="daily_limit" class="form-control" value="50">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Assign to Employee</label>
+                        <select name="employee_id" class="form-control">
+                            <option value="">Unassigned</option>
+                            {% for e in employees %}<option value="{{ e.id }}">{{ e.username }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Select Telegram Accounts to Use</label>
+                        <select name="account_ids" class="form-control" multiple size="5" required>
+                            {% for a in accounts %}
+                            <option value="{{ a.id }}">{{ a.phone }} (Sent: {{ a.daily_sent }}/{{ a.daily_limit }})</option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">Hold Ctrl/Cmd to select multiple accounts.</small>
+                    </div>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="submit" class="btn btn-primary w-100 py-2">Create Campaign</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
