@@ -19,7 +19,6 @@ def check_permissions():
     if not current_user.is_authenticated:
         return redirect(url_for('auth.login'))
     
-    # Admins can access everything
     if current_user.role == 'admin':
         return
         
@@ -114,7 +113,14 @@ def delete_proxy(id):
 def accounts():
     accounts = db.session.query(TelegramAccount).all()
     proxies = db.session.query(Proxy).filter_by(is_active=True).all()
-    free_proxy_available = any(p.accounts.count() < 5 for p in proxies)
+    
+    # Check if there is any proxy with less than 5 accounts OR if unproxied slots are available
+    has_free_proxy = any(p.accounts.count() < 5 for p in proxies)
+    unproxied_count = db.session.query(TelegramAccount).filter(TelegramAccount.proxy_id.is_(None), TelegramAccount.is_active == True).count()
+    can_add_without_proxy = unproxied_count < 3
+    
+    free_proxy_available = has_free_proxy or can_add_without_proxy
+    
     return render_template('admin/accounts.html', accounts=accounts, free_proxy_available=free_proxy_available)
 
 @admin_bp.route('/accounts/add', methods=['POST'])
@@ -128,13 +134,13 @@ def add_single_account():
             flash('Phone number already exists.', 'warning')
         else:
             account = TelegramAccount(phone=phone, api_id=api_id, api_hash=api_hash)
-            assigned_proxy = assign_proxy_to_account(account)
-            if not assigned_proxy:
-                flash('Free proxy not available. Cannot add account.', 'danger')
+            success, proxy, msg = assign_proxy_to_account(account)
+            if not success:
+                flash(msg, 'danger')
             else:
                 db.session.add(account)
                 db.session.commit()
-                flash('Account added successfully!', 'success')
+                flash(f'Account added successfully! {msg}', 'success')
     else:
         flash('All fields are required.', 'danger')
     return redirect(url_for('admin.accounts'))
@@ -151,25 +157,27 @@ def batch_add_accounts():
     
     phones = [p.strip() for p in phones_text.splitlines() if p.strip()]
     added = 0
-    proxy_failed = 0
+    limit_reached = False
     
     for phone in phones:
         if db.session.query(TelegramAccount).filter_by(phone=phone).first():
             continue
+            
         account = TelegramAccount(phone=phone, api_id=api_id, api_hash=api_hash)
-        assigned_proxy = assign_proxy_to_account(account)
-        if not assigned_proxy:
-            proxy_failed += 1
+        success, proxy, msg = assign_proxy_to_account(account)
+        if not success:
+            limit_reached = True
             break
+            
         db.session.add(account)
         added += 1
         
     try:
         db.session.commit()
-        if proxy_failed > 0:
-            flash(f'{added} accounts added. Free proxy not available for the remaining {proxy_failed} numbers.', 'warning')
+        if limit_reached:
+            flash(f'{added} accounts added. Stopped because: {msg}', 'warning')
         else:
-            flash(f'{added} accounts added successfully and assigned to proxies!', 'success')
+            flash(f'{added} accounts added successfully!', 'success')
     except Exception as e:
         db.session.rollback()
         flash(f'Error: {e}', 'danger')
