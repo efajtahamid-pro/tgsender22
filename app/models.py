@@ -52,10 +52,6 @@ class Proxy(db.Model):
     failure_count = db.Column(db.Integer, default=0)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    # FIX: removed cascade='all, delete-orphan'
-    # Deleting a proxy should NOT silently delete all Telegram accounts using it.
-    # The delete_proxy route now blocks deletion when accounts are attached.
     accounts = db.relationship('TelegramAccount', backref='proxy', lazy='dynamic')
 
 
@@ -65,8 +61,11 @@ class TelegramAccount(db.Model):
     phone = db.Column(db.String(20), unique=True, nullable=False, index=True)
     api_id = db.Column(db.String(20), nullable=False)
     api_hash = db.Column(db.String(100), nullable=False)
-    session_string = db.Column(db.Text)  # Encrypted at rest if SESSION_ENCRYPTION_KEY is set
-    proxy_id = db.Column(db.Integer, db.ForeignKey('proxies.id'), nullable=True, index=True)
+    session_string = db.Column(db.Text)
+    
+    # FIX: Enforce proxy_id NOT NULL at the database level
+    proxy_id = db.Column(db.Integer, db.ForeignKey('proxies.id'), nullable=False, index=True)
+    
     is_verified = db.Column(db.Boolean, default=False, index=True)
     is_active = db.Column(db.Boolean, default=True, index=True)
 
@@ -111,15 +110,12 @@ class Campaign(db.Model):
 class Recipient(db.Model):
     __tablename__ = 'recipients'
     __table_args__ = (
-        # FIX: unique constraint on lowercase username would be ideal,
-        # but SQLite doesn't support expression indexes easily.
-        # We normalize to lowercase on insert instead.
         db.UniqueConstraint('campaign_id', 'username', name='uq_campaign_username'),
         db.Index('ix_recipient_campaign_status', 'campaign_id', 'status'),
     )
     id = db.Column(db.Integer, primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id', ondelete='CASCADE'), nullable=False, index=True)
-    username = db.Column(db.String(100), nullable=False, index=True)  # Stored lowercase
+    username = db.Column(db.String(100), nullable=False, index=True)
     user_id = db.Column(db.BigInteger, nullable=True, index=True)
 
     status = db.Column(db.String(20), default='pending', nullable=False, index=True)
