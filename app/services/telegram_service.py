@@ -98,9 +98,22 @@ class TelegramService:
                 try:
                     client = self.get_client(acc)
                     if client:
+                        acc.health_status = 'healthy'
+                        acc.last_successful_connection = datetime.utcnow()
+                        acc.last_error = None
                         logger.info('Client connected on startup', extra={'account_phone': acc.phone})
+                    else:
+                        acc.health_status = 'disconnected'
+                        acc.last_error = 'Failed to authorize or connect'
+                except TimeoutError:
+                    acc.health_status = 'disconnected'
+                    acc.last_error = 'Connection timed out (Check Proxy)'
+                    logger.error('Timeout connecting client on startup', extra={'account_phone': acc.phone})
                 except Exception as e:
+                    acc.health_status = 'disconnected'
+                    acc.last_error = str(e)
                     logger.exception('Error connecting client on startup', extra={'account_phone': acc.phone})
+                db.session.commit()
 
     def get_client(self, account):
         return self._run_async(self._ensure_connected(account))
@@ -186,7 +199,7 @@ class TelegramService:
                 account.session_string = client.session.save()
                 account.is_verified = True
                 account.is_healthy = True
-                account.health_status = 'healthy'  # Explicitly set health status
+                account.health_status = 'healthy'
                 account.last_successful_connection = datetime.utcnow()
                 db.session.commit()
                 return {'status': 'success'}
