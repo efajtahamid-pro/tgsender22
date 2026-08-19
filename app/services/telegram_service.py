@@ -57,8 +57,20 @@ class TelegramService:
 
     def _get_proxy(self, proxy):
         if not proxy:
+            logger.warning("No proxy assigned to account. Attempting direct connection (will likely fail on cloud hosts).")
             return None
-        return (proxy.proxy_type, proxy.host, proxy.port, True, proxy.username, proxy.password)
+        
+        # FIX: Telethon/PySocks expects the integer constant (e.g., socks.SOCKS5), not the string 'socks5'.
+        # If we pass the string, Telethon silently ignores it and connects directly, causing the TimeoutError.
+        p_type = proxy.proxy_type
+        if p_type == 'socks5':
+            p_type = socks.SOCKS5
+        elif p_type == 'http':
+            p_type = socks.HTTP
+            
+        proxy_tuple = (p_type, proxy.host, proxy.port, True, proxy.username, proxy.password)
+        logger.info(f"Using proxy for connection: {proxy.host}:{proxy.port} (Type: {proxy.proxy_type})")
+        return proxy_tuple
 
     def _get_client_lock(self, account_id):
         if account_id not in self._client_locks:
@@ -166,7 +178,7 @@ class TelegramService:
             proxy = self._get_proxy(account.proxy)
             client = TelegramClient(
                 StringSession(), self.api_id, self.api_hash,
-                proxy=proxy, timeout=10, connection_retries=2
+                proxy=proxy, timeout=15, connection_retries=3, retry_delay=1
             )
             await client.connect()
             result = await client.send_code_request(account.phone)
@@ -182,7 +194,7 @@ class TelegramService:
             return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
         except TimeoutError:
             logger.error('send_code timed out for account %s', account.phone)
-            return {'status': 'error', 'message': 'Connection timed out. Render IPs are blocked by Telegram. You MUST assign a working proxy to this account.'}
+            return {'status': 'error', 'message': 'Connection timed out. The proxy is either dead or misconfigured, causing a direct connection that Telegram blocked.'}
         except Exception as e:
             logger.exception('send_code failed', extra={'account_phone': account.phone})
             return {'status': 'error', 'message': str(e)}
@@ -251,11 +263,8 @@ class TelegramService:
                     time.sleep(base_delay * attempt)
                     continue
 
-                # FIX: Removed client.get_entity() to prevent network timeouts. 
-                # Telethon natively accepts integers (user_id) or strings (@username) in send_message.
                 async def _send():
                     result = await client.send_message(target, message)
-                    # Extract the ID safely from the result object
                     t_id = None
                     if hasattr(result, 'peer_id') and hasattr(result.peer_id, 'user_id'):
                         t_id = result.peer_id.user_id
