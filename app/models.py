@@ -2,12 +2,12 @@ from datetime import datetime
 from flask_login import UserMixin
 from app.extensions import db
 
-# Association table for Campaign and TelegramAccount (Many-to-Many)
 campaign_accounts = db.Table(
     'campaign_accounts',
     db.Column('campaign_id', db.Integer, db.ForeignKey('campaigns.id', ondelete='CASCADE'), primary_key=True),
     db.Column('account_id', db.Integer, db.ForeignKey('telegram_accounts.id', ondelete='CASCADE'), primary_key=True)
 )
+
 
 class User(db.Model, UserMixin):
     __tablename__ = 'users'
@@ -31,6 +31,7 @@ class User(db.Model, UserMixin):
     campaigns = db.relationship('Campaign', backref='creator', lazy='dynamic', foreign_keys='Campaign.created_by')
     conversations = db.relationship('Conversation', backref='employee', lazy='dynamic', foreign_keys='Conversation.employee_id')
 
+
 class Proxy(db.Model):
     __tablename__ = 'proxies'
     id = db.Column(db.Integer, primary_key=True)
@@ -40,7 +41,7 @@ class Proxy(db.Model):
     username = db.Column(db.String(100))
     password = db.Column(db.String(100))
     is_active = db.Column(db.Boolean, default=True, index=True)
-    
+
     health_status = db.Column(db.String(20), default='unknown', index=True)
     last_checked_at = db.Column(db.DateTime, nullable=True)
     last_success_at = db.Column(db.DateTime, nullable=True)
@@ -49,9 +50,14 @@ class Proxy(db.Model):
     latency_ms = db.Column(db.Integer, nullable=True)
     success_count = db.Column(db.Integer, default=0)
     failure_count = db.Column(db.Integer, default=0)
-    
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    accounts = db.relationship('TelegramAccount', backref='proxy', lazy='dynamic', cascade='all, delete-orphan')
+
+    # FIX: removed cascade='all, delete-orphan'
+    # Deleting a proxy should NOT silently delete all Telegram accounts using it.
+    # The delete_proxy route now blocks deletion when accounts are attached.
+    accounts = db.relationship('TelegramAccount', backref='proxy', lazy='dynamic')
+
 
 class TelegramAccount(db.Model):
     __tablename__ = 'telegram_accounts'
@@ -59,16 +65,16 @@ class TelegramAccount(db.Model):
     phone = db.Column(db.String(20), unique=True, nullable=False, index=True)
     api_id = db.Column(db.String(20), nullable=False)
     api_hash = db.Column(db.String(100), nullable=False)
-    session_string = db.Column(db.Text)
+    session_string = db.Column(db.Text)  # Encrypted at rest if SESSION_ENCRYPTION_KEY is set
     proxy_id = db.Column(db.Integer, db.ForeignKey('proxies.id'), nullable=True, index=True)
     is_verified = db.Column(db.Boolean, default=False, index=True)
     is_active = db.Column(db.Boolean, default=True, index=True)
-    
+
     health_status = db.Column(db.String(20), default='unknown', index=True)
     last_health_check = db.Column(db.DateTime, nullable=True)
     last_successful_connection = db.Column(db.DateTime, nullable=True)
     last_error = db.Column(db.Text, nullable=True)
-    
+
     daily_sent = db.Column(db.Integer, default=0)
     daily_limit = db.Column(db.Integer, default=50)
     total_sent = db.Column(db.Integer, default=0)
@@ -76,6 +82,7 @@ class TelegramAccount(db.Model):
     last_reset = db.Column(db.DateTime, default=datetime.utcnow)
 
     recipients = db.relationship('Recipient', backref='account', lazy='dynamic', foreign_keys='Recipient.assigned_account_id')
+
 
 class Campaign(db.Model):
     __tablename__ = 'campaigns'
@@ -88,29 +95,33 @@ class Campaign(db.Model):
     daily_sent = db.Column(db.Integer, default=0)
     last_reset = db.Column(db.DateTime, default=datetime.utcnow)
     pause_reason = db.Column(db.String(255), nullable=True)
-    
+
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     employee_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     started_at = db.Column(db.DateTime)
     completed_at = db.Column(db.DateTime)
-    
+
     selected_accounts = db.relationship('TelegramAccount', secondary=campaign_accounts, backref='campaigns_used')
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade='all, delete-orphan')
     conversations = db.relationship('Conversation', backref='campaign', lazy='dynamic', cascade='all, delete-orphan')
     employee = db.relationship('User', foreign_keys=[employee_id], backref='assigned_campaigns')
 
+
 class Recipient(db.Model):
     __tablename__ = 'recipients'
     __table_args__ = (
+        # FIX: unique constraint on lowercase username would be ideal,
+        # but SQLite doesn't support expression indexes easily.
+        # We normalize to lowercase on insert instead.
         db.UniqueConstraint('campaign_id', 'username', name='uq_campaign_username'),
         db.Index('ix_recipient_campaign_status', 'campaign_id', 'status'),
     )
     id = db.Column(db.Integer, primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id', ondelete='CASCADE'), nullable=False, index=True)
-    username = db.Column(db.String(100), nullable=False, index=True)
+    username = db.Column(db.String(100), nullable=False, index=True)  # Stored lowercase
     user_id = db.Column(db.BigInteger, nullable=True, index=True)
-    
+
     status = db.Column(db.String(20), default='pending', nullable=False, index=True)
     assigned_account_id = db.Column(db.Integer, db.ForeignKey('telegram_accounts.id'), nullable=True, index=True)
     sent_at = db.Column(db.DateTime)
@@ -119,9 +130,10 @@ class Recipient(db.Model):
     retry_count = db.Column(db.Integer, default=0)
     dead_letter_reason = db.Column(db.Text, nullable=True)
     dead_lettered_at = db.Column(db.DateTime, nullable=True)
-    
+
     conversation = db.relationship('Conversation', backref='recipient', uselist=False, cascade='all, delete-orphan')
     send_logs = db.relationship('SendLog', backref='recipient', lazy='dynamic', cascade='all, delete-orphan')
+
 
 class Conversation(db.Model):
     __tablename__ = 'conversations'
@@ -134,6 +146,7 @@ class Conversation(db.Model):
     last_message_at = db.Column(db.DateTime, default=datetime.utcnow)
     messages = db.relationship('Message', backref='conversation', lazy='dynamic', order_by='Message.timestamp', cascade='all, delete-orphan')
 
+
 class Message(db.Model):
     __tablename__ = 'messages'
     __table_args__ = (db.Index('ix_message_conv_timestamp', 'conversation_id', 'timestamp'),)
@@ -144,13 +157,15 @@ class Message(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     telegram_message_id = db.Column(db.BigInteger, nullable=True, index=True)
 
+
 class ReplyCheckpoint(db.Model):
     __tablename__ = 'reply_checkpoints'
+    __table_args__ = (db.UniqueConstraint('account_id', 'dialog_id', name='uq_account_dialog'),)
     id = db.Column(db.Integer, primary_key=True)
     account_id = db.Column(db.Integer, db.ForeignKey('telegram_accounts.id'), nullable=False, index=True)
     dialog_id = db.Column(db.BigInteger, nullable=False, index=True)
     last_message_id = db.Column(db.BigInteger, default=0)
-    __table_args__ = (db.UniqueConstraint('account_id', 'dialog_id', name='uq_account_dialog'),)
+
 
 class SendLog(db.Model):
     __tablename__ = 'send_logs'
@@ -166,6 +181,7 @@ class SendLog(db.Model):
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime, nullable=True)
 
+
 class WorkerHeartbeat(db.Model):
     __tablename__ = 'worker_heartbeats'
     id = db.Column(db.Integer, primary_key=True)
@@ -174,6 +190,7 @@ class WorkerHeartbeat(db.Model):
     last_heartbeat = db.Column(db.DateTime, default=datetime.utcnow)
     status = db.Column(db.String(20), default='starting')
     last_error = db.Column(db.Text, nullable=True)
+
 
 class VerificationCode(db.Model):
     __tablename__ = 'verification_codes'
