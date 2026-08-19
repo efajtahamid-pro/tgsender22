@@ -10,6 +10,7 @@ from app.config import config_map
 from app.logging_config import configure_logging
 from app.errors import register_error_handlers
 
+
 def create_app(config_name=None):
     if config_name is None:
         config_name = os.getenv('APP_ENV', 'development')
@@ -17,11 +18,13 @@ def create_app(config_name=None):
     app = Flask(__name__)
     app.config.from_object(config_map[config_name])
 
+    # Normalize Postgres URL
     db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
     if db_uri.startswith('postgres://'):
         db_uri = db_uri.replace('postgres://', 'postgresql://', 1)
         app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
 
+    # Engine options per dialect
     if 'sqlite' in db_uri:
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'poolclass': NullPool,
@@ -30,6 +33,7 @@ def create_app(config_name=None):
     else:
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 
+    # Initialize extensions
     db.init_app(app)
     login_manager.init_app(app)
     migrate.init_app(app, db)
@@ -37,11 +41,20 @@ def create_app(config_name=None):
     cors.init_app(app)
     bcrypt.init_app(app)
     limiter.init_app(app)
-    socketio.init_app(app, async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'threading'), cors_allowed_origins='*')
+
+    # SocketIO with optional Redis message queue for cross-process emits
+    mq = app.config.get('SOCKETIO_MESSAGE_QUEUE', '')
+    socketio.init_app(
+        app,
+        async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'threading'),
+        cors_allowed_origins='*',
+        message_queue=mq if mq else None
+    )
 
     configure_logging(app)
     register_error_handlers(app)
 
+    # SQLite PRAGMAs for WAL mode + normal sync
     if 'sqlite' in db_uri:
         with app.app_context():
             @event.listens_for(db.engine, 'connect')
@@ -49,6 +62,7 @@ def create_app(config_name=None):
                 cursor = dbapi_connection.cursor()
                 cursor.execute('PRAGMA journal_mode=WAL')
                 cursor.execute('PRAGMA synchronous=NORMAL')
+                cursor.execute('PRAGMA foreign_keys=ON')
                 cursor.close()
 
     @login_manager.user_loader
@@ -59,6 +73,7 @@ def create_app(config_name=None):
     with app.app_context():
         _create_tables_and_admin(app)
 
+    # Register blueprints
     from app.routes.auth import auth_bp
     from app.routes.admin import admin_bp
     from app.routes.employee import employee_bp
@@ -80,6 +95,7 @@ def create_app(config_name=None):
             return jsonify({'status': 'unhealthy', 'error': str(e)}), 503
 
     return app
+
 
 def _create_tables_and_admin(app):
     from app.models import User
