@@ -7,7 +7,6 @@ class ContextFilter(logging.Filter):
     def filter(self, record):
         record.service = 'telegram-bot-platform'
         record.environment = os.getenv('APP_ENV', 'development')
-
         if has_request_context():
             record.request_path = request.path
             record.request_method = request.method
@@ -26,23 +25,21 @@ class ContextFilter(logging.Filter):
             record.user_id = None
             record.user_role = None
 
-        for f in ('campaign_id', 'account_id', 'account_phone', 'recipient_id',
-                  'status', 'conversation_id', 'error_type', 'task_id'):
-            if not hasattr(record, f):
-                setattr(record, f, None)
+        for f in ('campaign_id', 'account_id', 'account_phone', 'recipient_id', 'status', 'conversation_id', 'error_type', 'task_id'):
+            if not hasattr(record, f): setattr(record, f, None)
         return True
 
 def configure_logging(app):
     log_level = app.config.get('LOG_LEVEL', 'INFO')
     log_file = app.config.get('LOG_FILE', 'logs/app.log')
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    
+    # FIX: Ensure directory exists. os.path.dirname('logs/app.log') is 'logs'.
+    log_dir = os.path.dirname(log_file)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
 
     formatter = jsonlogger.JsonFormatter(
-        '%(asctime)s %(levelname)s %(name)s %(message)s '
-        '%(service)s %(environment)s %(user_id)s %(user_role)s '
-        '%(request_method)s %(request_path)s %(remote_ip)s '
-        '%(campaign_id)s %(account_id)s %(account_phone)s %(recipient_id)s %(status)s '
-        '%(conversation_id)s %(error_type)s %(task_id)s'
+        '%(asctime)s %(levelname)s %(name)s %(message)s %(service)s %(environment)s %(user_id)s %(user_role)s %(request_method)s %(request_path)s %(remote_ip)s %(campaign_id)s %(account_id)s %(account_phone)s %(recipient_id)s %(status)s %(conversation_id)s %(error_type)s %(task_id)s'
     )
 
     context_filter = ContextFilter()
@@ -64,5 +61,3 @@ def configure_logging(app):
     logging.getLogger('engineio').setLevel(logging.WARNING)
     logging.getLogger('socketio').setLevel(logging.WARNING)
     logging.getLogger('telethon').setLevel(logging.WARNING)
-
-    app.logger.info('Logging configured', extra={'status': 'initialized'})
