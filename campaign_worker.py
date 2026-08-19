@@ -1,7 +1,7 @@
 import os
 import time
-import random
 import logging
+import random
 from datetime import datetime, timedelta
 from app import create_app
 from app.extensions import db
@@ -13,18 +13,22 @@ logger = logging.getLogger(__name__)
 app = create_app(os.getenv('APP_ENV', 'development'))
 
 def update_heartbeat(status, error=None):
-    beat = db.session.execute(
-        text("""
-            INSERT INTO worker_heartbeats (worker_name, worker_type, last_heartbeat, status, last_error)
-            VALUES ('campaign_worker_1', 'campaign', NOW(), :status, :error)
-            ON CONFLICT (worker_name) DO UPDATE SET
-                last_heartbeat = NOW(),
-                status = :status,
-                last_error = :error
-        """),
-        {'status': status, 'error': error}
-    )
-    db.session.commit()
+    try:
+        db.session.execute(
+            text("""
+                INSERT INTO worker_heartbeats (worker_name, worker_type, last_heartbeat, status, last_error)
+                VALUES ('campaign_worker_1', 'campaign', NOW(), :status, :error)
+                ON CONFLICT (worker_name) DO UPDATE SET
+                    last_heartbeat = NOW(),
+                    status = :status,
+                    last_error = :error
+            """),
+            {'status': status, 'error': error}
+        )
+        db.session.commit()
+    except Exception as e:
+        logger.error(f"Failed to update heartbeat: {e}")
+        db.session.rollback()
 
 def reset_daily_limits():
     now = datetime.utcnow()
@@ -67,7 +71,6 @@ def process_campaign(campaign, telegram):
 
     claimed = claim_recipient(campaign.id)
     if not claimed:
-        # Check if fully completed
         if not db.session.query(Recipient).filter_by(campaign_id=campaign.id, status='pending').first():
             campaign.status = 'completed'
             campaign.completed_at = datetime.utcnow()
@@ -77,12 +80,12 @@ def process_campaign(campaign, telegram):
     rec_id, username = claimed
     recipient = db.session.get(Recipient, rec_id)
     
-    # Select least recently used healthy account
+    # Use verified, active accounts. Relaxed health check to include 'unknown' and 'healthy'
     account = db.session.query(TelegramAccount).filter(
         TelegramAccount.id.in_([a.id for a in campaign.selected_accounts]),
         TelegramAccount.is_active == True,
         TelegramAccount.is_verified == True,
-        TelegramAccount.health_status == 'healthy',
+        TelegramAccount.health_status.in_(['healthy', 'unknown']),
         TelegramAccount.daily_sent < TelegramAccount.daily_limit
     ).order_by(TelegramAccount.last_used.asc().nullsfirst()).first()
 
@@ -98,7 +101,6 @@ def process_campaign(campaign, telegram):
     db.session.add(log_entry)
     db.session.commit()
 
-    # Message Variations (split by '---')
     messages = [m.strip() for m in campaign.message.split('---') if m.strip()]
     chosen_message = random.choice(messages) if messages else campaign.message
 
