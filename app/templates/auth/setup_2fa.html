@@ -9,8 +9,7 @@
                     <div class="alert alert-success">2FA is <strong>enabled</strong>.</div>
                     <form method="POST" class="mb-3">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <label>Test code:</label>
-                        <input type="text" name="code" class="form-control mb-2" pattern="[0-9]{6}" maxlength="6">
+                        <label>Test code:</label><input type="text" name="code" class="form-control mb-2" pattern="[0-9]{6}" maxlength="6">
                         <button name="action" value="verify" class="btn btn-info">Verify</button>
                     </form>
                     <form method="POST" onsubmit="return confirm('Disable 2FA?')">
@@ -21,14 +20,10 @@
                     <p>Scan QR with your authenticator app:</p>
                     {% if qr_b64 %}
                         <img src="data:image/png;base64,{{ qr_b64 }}" class="img-fluid border rounded mb-3" style="max-width:200px;">
-                        <div class="mb-3">
-                            <label>Manual entry:</label>
-                            <input class="form-control font-monospace" value="{{ secret }}" readonly>
-                        </div>
+                        <div class="mb-3"><label>Manual entry:</label><input class="form-control font-monospace" value="{{ secret }}" readonly></div>
                         <form method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <label>Enter code to confirm:</label>
-                            <input type="text" name="code" class="form-control mb-2" pattern="[0-9]{6}" maxlength="6" required>
+                            <label>Enter code to confirm:</label><input type="text" name="code" class="form-control mb-2" pattern="[0-9]{6}" maxlength="6" required>
                             <button name="action" value="enable" class="btn btn-success">Enable 2FA</button>
                         </form>
                     {% endif %}
