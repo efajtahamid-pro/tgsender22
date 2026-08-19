@@ -10,17 +10,36 @@
 <div class="card shadow-sm">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
-            <thead class="table-light"><tr><th>ID</th><th>Type</th><th>Host:Port</th><th>Username</th><th>Accounts</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+            <thead class="table-light">
+                <tr>
+                    <th>ID</th>
+                    <th>Type</th>
+                    <th>Host:Port</th>
+                    <th>Username</th>
+                    <th>Accounts</th>
+                    <th>Health</th>
+                    <th>Latency</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
             <tbody>
                 {% for p in proxies %}
-                <tr>
+                <tr id="proxy-row-{{ p.id }}">
                     <td>{{ p.id }}</td>
                     <td><span class="badge bg-secondary">{{ p.proxy_type }}</span></td>
                     <td class="fw-bold">{{ p.host }}:{{ p.port }}</td>
                     <td>{{ p.username or '-' }}</td>
                     <td><span class="badge bg-{{ 'danger' if p.accounts.count() >= 5 else 'success' }}">{{ p.accounts.count() }} / 5</span></td>
-                    <td><span class="badge bg-{{ 'success' if p.is_active else 'danger' }}">{{ 'Active' if p.is_active else 'Inactive' }}</span></td>
+                    <td>
+                        <span class="badge bg-{{ 'success' if p.health_status == 'healthy' else 'danger' if p.health_status == 'unhealthy' else 'warning text-dark' if p.health_status == 'testing' else 'secondary' }}" id="proxy-status-{{ p.id }}">
+                            {{ p.health_status | capitalize }}
+                        </span>
+                    </td>
+                    <td id="proxy-latency-{{ p.id }}">{{ p.latency_ms ~ 'ms' if p.latency_ms else '-' }}</td>
                     <td class="text-end">
+                        <button class="btn btn-sm btn-info" onclick="testProxy({{ p.id }})" id="test-btn-{{ p.id }}">
+                            <i class="bi bi-lightning-charge"></i> Test
+                        </button>
                         <form method="POST" action="{{ url_for('admin.toggle_proxy', id=p.id) }}" style="display:inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-warning">{{ 'Disable' if p.is_active else 'Enable' }}</button>
                         </form>
@@ -54,4 +73,52 @@
         <div class="modal-footer border-0"><button type="submit" class="btn btn-primary w-100 py-2">Upload CSV</button></div>
     </form>
 </div></div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+function testProxy(id) {
+    const btn = document.getElementById(`test-btn-${id}`);
+    const statusBadge = document.getElementById(`proxy-status-${id}`);
+    const latencyCell = document.getElementById(`proxy-latency-${id}`);
+    
+    // Update UI to show testing state
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Testing...';
+    statusBadge.className = 'badge bg-warning text-dark';
+    statusBadge.textContent = 'Testing';
+
+    fetch(`/admin/proxy/${id}/test`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': csrfToken,
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'healthy') {
+            statusBadge.className = 'badge bg-success';
+            statusBadge.textContent = 'Healthy';
+            latencyCell.textContent = data.latency + 'ms';
+        } else {
+            statusBadge.className = 'badge bg-danger';
+            statusBadge.textContent = 'Unhealthy';
+            latencyCell.textContent = 'Error';
+            alert('Proxy test failed: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        statusBadge.className = 'badge bg-danger';
+        statusBadge.textContent = 'Error';
+        alert('Network error while testing proxy.');
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-lightning-charge"></i> Test';
+    });
+}
+</script>
 {% endblock %}
