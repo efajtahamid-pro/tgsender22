@@ -194,7 +194,8 @@ class TelegramService:
             return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
         except TimeoutError:
             logger.error('send_code timed out for account %s', account.phone)
-            return {'status': 'error', 'message': 'Connection timed out. The proxy is either dead or misconfigured, causing a direct connection that Telegram blocked.'}
+            # FIX: Corrected error message per code review
+            return {'status': 'error', 'message': 'Connection timed out. Verify the assigned proxy and Telegram connectivity.'}
         except Exception as e:
             logger.exception('send_code failed', extra={'account_phone': account.phone})
             return {'status': 'error', 'message': str(e)}
