@@ -164,13 +164,13 @@ def accounts():
 @admin_bp.route('/accounts/add', methods=['POST'])
 def add_single_account():
     phone = request.form.get('phone')
-    api_id = request.form.get('api_id')
-    api_hash = request.form.get('api_hash')
-    if phone and api_id and api_hash:
+    # FIX: No longer requires api_id or api_hash from the form. Uses global .env vars.
+    if phone:
         if db.session.query(TelegramAccount).filter_by(phone=phone).first():
             flash('Phone number already exists.', 'warning')
         else:
-            acc = TelegramAccount(phone=phone, api_id=api_id, api_hash=api_hash)
+            # Use empty strings for DB columns to satisfy NOT NULL constraints, but they are never used.
+            acc = TelegramAccount(phone=phone, api_id="global", api_hash="global")
             ok, _, msg = assign_proxy_to_account(acc)
             if not ok:
                 flash(msg, 'danger')
@@ -179,16 +179,14 @@ def add_single_account():
                 db.session.commit()
                 flash(f'Account added! {msg}', 'success')
     else:
-        flash('All fields are required.', 'danger')
+        flash('Phone number is required.', 'danger')
     return redirect(url_for('admin.accounts'))
 
 
 @admin_bp.route('/accounts/batch', methods=['POST'])
 def batch_add_accounts():
-    api_id = request.form.get('api_id')
-    api_hash = request.form.get('api_hash')
     phones_text = request.form.get('phones')
-    if not api_id or not api_hash or not phones_text:
+    if not phones_text:
         flash('Missing data', 'danger')
         return redirect(url_for('admin.accounts'))
 
@@ -198,7 +196,7 @@ def batch_add_accounts():
         if db.session.query(TelegramAccount).filter_by(phone=phone).first():
             skipped += 1
             continue
-        acc = TelegramAccount(phone=phone, api_id=api_id, api_hash=api_hash)
+        acc = TelegramAccount(phone=phone, api_id="global", api_hash="global")
         ok, _, msg = assign_proxy_to_account(acc)
         if not ok:
             flash(f'Stopped at {phone}: {msg}', 'danger')
@@ -258,8 +256,6 @@ def delete_account(id):
     acc = db.session.get(TelegramAccount, id)
     if acc:
         try:
-            # FIX: Clean up all linked database records before deleting the account
-            # This prevents ForeignKeyViolation errors that crash the database session
             db.session.query(Recipient).filter_by(assigned_account_id=id).update({'assigned_account_id': None})
             db.session.query(SendLog).filter_by(account_id=id).delete(synchronize_session=False)
             db.session.query(VerificationCode).filter_by(account_id=id).delete(synchronize_session=False)
