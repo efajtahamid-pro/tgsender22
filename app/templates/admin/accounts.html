@@ -35,8 +35,7 @@
         <div class="modal-header bg-primary text-white border-0"><h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i> Add Single Account</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
         <div class="modal-body">
             <div class="mb-3"><label class="form-label fw-bold">Phone Number (with country code)</label><input type="text" name="phone" class="form-control" placeholder="15551234567" required></div>
-            <div class="mb-3"><label class="form-label fw-bold">API ID</label><input type="text" name="api_id" class="form-control" required></div>
-            <div class="mb-3"><label class="form-label fw-bold">API Hash</label><input type="text" name="api_hash" class="form-control" required></div>
+            <small class="text-muted">API ID and API Hash are loaded automatically from the server environment.</small>
         </div>
         <div class="modal-footer border-0"><button type="submit" class="btn btn-primary w-100 py-2">Add Account</button></div>
     </form>
@@ -45,8 +44,7 @@
     <form method="POST" action="{{ url_for('admin.batch_add_accounts') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-header bg-primary text-white border-0"><h5 class="modal-title"><i class="bi bi-upload me-2"></i> Batch Add Accounts</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
         <div class="modal-body">
-            <p class="text-muted">Enter a single API ID and API Hash, followed by a list of phone numbers (one per line). All numbers will use the same API credentials.</p>
-            <div class="row mb-3"><div class="col-md-6"><label class="form-label fw-bold">API ID</label><input type="text" name="api_id" class="form-control" required></div><div class="col-md-6"><label class="form-label fw-bold">API Hash</label><input type="text" name="api_hash" class="form-control" required></div></div>
+            <p class="text-muted">Enter a list of phone numbers (one per line). All numbers will use the global API credentials configured on the server.</p>
             <label class="form-label fw-bold">Phone Numbers (one per line)</label><textarea name="phones" class="form-control" rows="10" placeholder="15551234567&#10;15557654321" required></textarea>
         </div>
         <div class="modal-footer border-0"><button type="submit" class="btn btn-primary w-100 py-2">Add Batch & Assign Proxies</button></div>
