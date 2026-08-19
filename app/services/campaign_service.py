@@ -1,6 +1,6 @@
 import logging
 from app.extensions import db
-from app.models import Campaign, Recipient, TelegramAccount, Proxy
+from app.models import Campaign, Recipient
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +17,6 @@ def get_campaign_stats(campaign_id):
     progress = round((completed / total * 100), 1) if total > 0 else 0
 
     return {
-        'total': total,
-        'sent': sent,
-        'failed': failed,
-        'pending': pending,
-        'replied': replied,
-        'dead_letter': dead_letter,
-        'progress': progress,
+        'total': total, 'sent': sent, 'failed': failed, 'pending': pending,
+        'replied': replied, 'dead_letter': dead_letter, 'progress': progress,
     }
