@@ -1,10 +1,13 @@
 import logging
 from flask_login import current_user
-from flask_socketio import join_room, leave_room, emit
+from flask_socketio import join_room, leave_room, disconnect
+from app.extensions import db
+from app.models import Campaign
 
 logger = logging.getLogger(__name__)
 
 def register_socket_handlers(socketio):
+
     @socketio.on('connect')
     def on_connect():
         if not current_user.is_authenticated:
@@ -21,13 +24,17 @@ def register_socket_handlers(socketio):
         campaign_id = data.get('campaign_id')
         if not campaign_id:
             return
-        join_room(f'campaign_{campaign_id}')
+        
+        campaign = db.session.get(Campaign, campaign_id)
+        if not campaign:
+            return disconnect()
 
-    @socketio.on('leave_campaign')
-    def on_leave_campaign(data):
-        campaign_id = data.get('campaign_id')
-        if campaign_id:
-            leave_room(f'campaign_{campaign_id}')
+        if current_user.role == 'admin' or campaign.employee_id == current_user.id or campaign.created_by == current_user.id:
+            join_room(f'campaign_{campaign_id}')
+            logger.info('Joined campaign room', extra={'campaign_id': campaign_id, 'user_id': current_user.id})
+        else:
+            logger.warning('Unauthorized socket join attempt', extra={'user_id': current_user.id, 'campaign_id': campaign_id})
+            return disconnect()
 
     @socketio.on('join_conversations')
     def on_join_conversations():
