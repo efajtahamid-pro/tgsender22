@@ -186,6 +186,8 @@ class TelegramService:
                 account.session_string = client.session.save()
                 account.is_verified = True
                 account.is_healthy = True
+                account.health_status = 'healthy'  # Explicitly set health status
+                account.last_successful_connection = datetime.utcnow()
                 db.session.commit()
                 return {'status': 'success'}
             else:
