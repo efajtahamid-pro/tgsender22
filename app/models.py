@@ -41,8 +41,7 @@ class Proxy(db.Model):
     password = db.Column(db.String(100))
     is_active = db.Column(db.Boolean, default=True, index=True)
     
-    # Health & Audit Fields
-    health_status = db.Column(db.String(20), default='unknown', index=True) # healthy, unhealthy, testing, disabled, unknown
+    health_status = db.Column(db.String(20), default='unknown', index=True)
     last_checked_at = db.Column(db.DateTime, nullable=True)
     last_success_at = db.Column(db.DateTime, nullable=True)
     last_failure_at = db.Column(db.DateTime, nullable=True)
@@ -65,8 +64,7 @@ class TelegramAccount(db.Model):
     is_verified = db.Column(db.Boolean, default=False, index=True)
     is_active = db.Column(db.Boolean, default=True, index=True)
     
-    # Health & Audit Fields
-    health_status = db.Column(db.String(20), default='unknown', index=True) # healthy, disconnected, unauthorized, disabled, unknown
+    health_status = db.Column(db.String(20), default='unknown', index=True)
     last_health_check = db.Column(db.DateTime, nullable=True)
     last_successful_connection = db.Column(db.DateTime, nullable=True)
     last_error = db.Column(db.Text, nullable=True)
@@ -84,12 +82,12 @@ class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
     message = db.Column(db.Text, nullable=False)
-    status = db.Column(db.String(20), default='draft', nullable=False, index=True) # draft, running, paused, completed, failed
+    status = db.Column(db.String(20), default='draft', nullable=False, index=True)
     delay_seconds = db.Column(db.Integer, default=2)
     daily_limit = db.Column(db.Integer, default=50)
     daily_sent = db.Column(db.Integer, default=0)
     last_reset = db.Column(db.DateTime, default=datetime.utcnow)
-    pause_reason = db.Column(db.String(255), nullable=True) # e.g., 'daily_limit_reached', 'no_healthy_accounts'
+    pause_reason = db.Column(db.String(255), nullable=True)
     
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     employee_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
@@ -113,8 +111,7 @@ class Recipient(db.Model):
     username = db.Column(db.String(100), nullable=False, index=True)
     user_id = db.Column(db.BigInteger, nullable=True, index=True)
     
-    # Explicit State Machine
-    status = db.Column(db.String(20), default='pending', nullable=False, index=True) # pending, sending, sent, replied, failed, dead_letter
+    status = db.Column(db.String(20), default='pending', nullable=False, index=True)
     assigned_account_id = db.Column(db.Integer, db.ForeignKey('telegram_accounts.id'), nullable=True, index=True)
     sent_at = db.Column(db.DateTime)
     replied_at = db.Column(db.DateTime)
@@ -122,7 +119,9 @@ class Recipient(db.Model):
     retry_count = db.Column(db.Integer, default=0)
     dead_letter_reason = db.Column(db.Text, nullable=True)
     dead_lettered_at = db.Column(db.DateTime, nullable=True)
+    
     conversation = db.relationship('Conversation', backref='recipient', uselist=False, cascade='all, delete-orphan')
+    send_logs = db.relationship('SendLog', backref='recipient', lazy='dynamic', cascade='all, delete-orphan')
 
 class Conversation(db.Model):
     __tablename__ = 'conversations'
@@ -154,28 +153,26 @@ class ReplyCheckpoint(db.Model):
     __table_args__ = (db.UniqueConstraint('account_id', 'dialog_id', name='uq_account_dialog'),)
 
 class SendLog(db.Model):
-    """Audit log for every single send attempt."""
     __tablename__ = 'send_logs'
     id = db.Column(db.Integer, primary_key=True)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False, index=True)
-    recipient_id = db.Column(db.Integer, db.ForeignKey('recipients.id'), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id', ondelete='CASCADE'), nullable=False, index=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey('recipients.id', ondelete='CASCADE'), nullable=False, index=True)
     account_id = db.Column(db.Integer, db.ForeignKey('telegram_accounts.id'), nullable=False, index=True)
     proxy_id = db.Column(db.Integer, db.ForeignKey('proxies.id'), nullable=True, index=True)
     telegram_message_id = db.Column(db.BigInteger, nullable=True)
     attempt = db.Column(db.Integer, default=1)
-    status = db.Column(db.String(20), nullable=False) # success, failed, retried
+    status = db.Column(db.String(20), nullable=False)
     error = db.Column(db.Text, nullable=True)
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime, nullable=True)
 
 class WorkerHeartbeat(db.Model):
-    """Tracks if background workers are alive."""
     __tablename__ = 'worker_heartbeats'
     id = db.Column(db.Integer, primary_key=True)
     worker_name = db.Column(db.String(50), unique=True, nullable=False)
-    worker_type = db.Column(db.String(20), nullable=False) # campaign, reply
+    worker_type = db.Column(db.String(20), nullable=False)
     last_heartbeat = db.Column(db.DateTime, default=datetime.utcnow)
-    status = db.Column(db.String(20), default='starting') # running, paused, error
+    status = db.Column(db.String(20), default='starting')
     last_error = db.Column(db.Text, nullable=True)
 
 class VerificationCode(db.Model):
