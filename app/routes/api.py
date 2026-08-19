@@ -26,6 +26,7 @@ def campaign_recipients(campaign_id):
     return jsonify({
         'items': [{
             'id': r.id,
+            'phone': r.phone,
             'username': r.username,
             'user_id': r.user_id,
             'status': r.status,
