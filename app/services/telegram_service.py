@@ -188,14 +188,14 @@ class TelegramService:
             return result.phone_code_hash
 
         try:
-            hash_val = self._run_async(_send(), timeout=30)
+            # FIX: Increased timeout to 60s to handle slow proxy connections
+            hash_val = self._run_async(_send(), timeout=60)
             return {'status': 'success', 'phone_code_hash': hash_val}
         except FloodWaitError as e:
             return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
         except TimeoutError:
             logger.error('send_code timed out for account %s', account.phone)
-            # FIX: Corrected error message per code review
-            return {'status': 'error', 'message': 'Connection timed out. Verify the assigned proxy and Telegram connectivity.'}
+            return {'status': 'error', 'message': 'Connection timed out. The proxy is either dead, too slow, or blocking Telegram MTProto traffic. Try a different proxy.'}
         except Exception as e:
             logger.exception('send_code failed', extra={'account_phone': account.phone})
             return {'status': 'error', 'message': str(e)}
@@ -264,8 +264,11 @@ class TelegramService:
                     time.sleep(base_delay * attempt)
                     continue
 
+                # FIX: Removed client.get_entity() to prevent network timeouts. 
+                # Telethon natively accepts integers (user_id) or strings (@username) in send_message.
                 async def _send():
                     result = await client.send_message(target, message)
+                    # Extract the ID safely from the result object
                     t_id = None
                     if hasattr(result, 'peer_id') and hasattr(result.peer_id, 'user_id'):
                         t_id = result.peer_id.user_id
