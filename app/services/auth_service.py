@@ -26,9 +26,7 @@ def generate_totp_secret() -> str:
 
 def get_totp_uri(user: User) -> str:
     issuer = current_app.config.get('TOTP_ISSUER', 'TelegramBotPlatform')
-    return pyotp.totp.TOTP(user.totp_secret).provisioning_uri(
-        name=user.username, issuer_name=issuer
-    )
+    return pyotp.totp.TOTP(user.totp_secret).provisioning_uri(name=user.username, issuer_name=issuer)
 
 def generate_qr_base64(data_uri: str) -> str:
     img = qrcode.make(data_uri)
@@ -46,9 +44,7 @@ def register_failed_login(user: User):
     user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
     max_attempts = current_app.config.get('LOGIN_MAX_ATTEMPTS', 5)
     if user.failed_login_attempts >= max_attempts:
-        user.locked_until = datetime.utcnow() + timedelta(
-            minutes=current_app.config.get('LOGIN_LOCKOUT_MINUTES', 15)
-        )
+        user.locked_until = datetime.utcnow() + timedelta(minutes=current_app.config.get('LOGIN_LOCKOUT_MINUTES', 15))
     db.session.commit()
 
 def reset_failed_login(user: User):
