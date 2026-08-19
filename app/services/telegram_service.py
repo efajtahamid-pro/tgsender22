@@ -46,8 +46,8 @@ class TelegramService:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
-    def _run_async(self, coro):
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=120)
+    def _run_async(self, coro, timeout=60):
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=timeout)
 
     def _get_proxy(self, proxy):
         if not proxy:
@@ -116,7 +116,7 @@ class TelegramService:
                 db.session.commit()
 
     def get_client(self, account):
-        return self._run_async(self._ensure_connected(account))
+        return self._run_async(self._ensure_connected(account), timeout=30)
 
     def test_proxy_connection(self, proxy: Proxy):
         """Tests proxy reachability without Telegram."""
@@ -154,7 +154,7 @@ class TelegramService:
                 if not p_ok:
                     return False, f"Proxy failed: {p_err}"
 
-            ok, msg = self._run_async(_check())
+            ok, msg = self._run_async(_check(), timeout=30)
             return ok, msg
         except Exception as e:
             return False, str(e)
@@ -171,7 +171,7 @@ class TelegramService:
             return result.phone_code_hash
 
         try:
-            phone_code_hash = self._run_async(_send())
+            phone_code_hash = self._run_async(_send(), timeout=30)
             return {'status': 'success', 'phone_code_hash': phone_code_hash}
         except FloodWaitError as e:
             return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
@@ -207,7 +207,7 @@ class TelegramService:
                 return {'status': 'error', 'message': 'Not authorized after sign-in'}
 
         try:
-            result = self._run_async(_sign_in())
+            result = self._run_async(_sign_in(), timeout=30)
             return result
         except PhoneCodeInvalidError:
             return {'status': 'error', 'message': 'Invalid code'}
@@ -249,7 +249,7 @@ class TelegramService:
                     result = await client.send_message(entity, message)
                     return entity, result
 
-                entity, result = self._run_async(_send())
+                entity, result = self._run_async(_send(), timeout=30)
                 telegram_user_id = entity.id if hasattr(entity, 'id') else None
 
                 return {
@@ -282,7 +282,7 @@ class TelegramService:
             dialogs = await client.get_dialogs(limit=None)
             return dialogs
         try:
-            return self._run_async(_fetch())
+            return self._run_async(_fetch(), timeout=30)
         except Exception as e:
             logger.error('Fetch dialogs failed', exc_info=True, extra={'account_phone': account.phone})
             return []
@@ -299,7 +299,7 @@ class TelegramService:
                 messages.append(msg)
             return messages
         try:
-            return self._run_async(_fetch())
+            return self._run_async(_fetch(), timeout=30)
         except Exception as e:
             logger.error('Fetch dialog messages failed', exc_info=True, extra={'account_phone': account.phone})
             return []
