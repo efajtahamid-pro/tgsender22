@@ -7,7 +7,7 @@ import pandas as pd
 
 from app.extensions import db
 from app.models import (User, Proxy, TelegramAccount, Campaign, Recipient,
-                        VerificationCode, SendLog)
+                        VerificationCode, SendLog, ReplyCheckpoint)
 from app.services.proxy_service import assign_proxy_to_account
 from app.services.auth_service import validate_strong_password
 from app.services.campaign_service import get_campaign_stats
@@ -128,7 +128,6 @@ def delete_proxy(id):
         flash('Proxy not found.', 'danger')
         return redirect(url_for('admin.proxies'))
 
-    # FIX: Block deletion if accounts are attached (cascade was removed from model)
     account_count = proxy.accounts.count()
     if account_count > 0:
         flash(
@@ -258,9 +257,20 @@ def toggle_account(id):
 def delete_account(id):
     acc = db.session.get(TelegramAccount, id)
     if acc:
-        db.session.delete(acc)
-        db.session.commit()
-    flash('Account deleted.', 'info')
+        try:
+            # FIX: Clean up all linked database records before deleting the account
+            # This prevents ForeignKeyViolation errors that crash the database session
+            db.session.query(Recipient).filter_by(assigned_account_id=id).update({'assigned_account_id': None})
+            db.session.query(SendLog).filter_by(account_id=id).delete(synchronize_session=False)
+            db.session.query(VerificationCode).filter_by(account_id=id).delete(synchronize_session=False)
+            db.session.query(ReplyCheckpoint).filter_by(account_id=id).delete(synchronize_session=False)
+            
+            db.session.delete(acc)
+            db.session.commit()
+            flash('Account deleted successfully.', 'info')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error deleting account: {e}', 'danger')
     return redirect(url_for('admin.accounts'))
 
 
@@ -361,7 +371,6 @@ def campaign_detail(id):
         added = 0
         skipped = 0
         for u in [u.strip().lstrip('@') for u in usernames_text.splitlines() if u.strip()]:
-            # FIX: normalize to lowercase for case-insensitive dedup
             u_lower = u.lower()
             if not u_lower:
                 continue
@@ -377,7 +386,6 @@ def campaign_detail(id):
             flash(f'{added} recipients uploaded.', 'success')
         return redirect(url_for('admin.campaign_detail', id=id))
 
-    # FIX: add pagination instead of hard .limit(500)
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 100, type=int)
     recipients_pag = db.session.query(Recipient).filter_by(campaign_id=id) \
@@ -469,7 +477,6 @@ def health_dashboard():
     proxies = db.session.query(Proxy).all()
     accounts = db.session.query(TelegramAccount).all()
 
-    # Warn if worker heartbeats are stale
     now = datetime.utcnow()
     stale_workers = []
     for w in workers:
