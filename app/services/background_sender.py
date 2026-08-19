@@ -68,12 +68,7 @@ class BackgroundSender:
                         last_poll_time = time.time()
 
                     time.sleep(5)
-                    
-                    # FIX: Critical for Gunicorn/web responsiveness.
-                    # Removing the session returns the DB connection to the pool
-                    # and releases any transaction locks so the web UI can query the DB instantly.
                     db.session.remove()
-                    
                 except Exception as e:
                     logger.exception("Background loop error: %s", e)
                     db.session.rollback()
@@ -154,18 +149,20 @@ class BackgroundSender:
                 }, room=f'campaign_{campaign.id}')
             return
 
+        # FIX: Removed the health_status check. We will attempt to send with any active/verified account.
+        # If the account is actually disconnected, send_message_sync will handle the error and retry/dead-letter.
         accounts = [acc for acc in campaign.selected_accounts
-                     if acc.is_active and acc.is_verified
-                     and acc.health_status in ('healthy', 'unknown')]
+                     if acc.is_active and acc.is_verified]
 
         if not accounts:
             campaign.status = 'paused'
-            campaign.pause_reason = 'no_healthy_accounts'
+            campaign.pause_reason = 'no_active_accounts'
             db.session.commit()
             socketio.emit('campaign_status', {
                 'campaign_id': campaign.id, 'status': 'paused',
-                'reason': 'no_healthy_accounts'
+                'reason': 'no_active_accounts'
             }, room=f'campaign_{campaign.id}')
+            logger.warning("Campaign %s paused — no active/verified accounts.", campaign.id)
             return
 
         messages = [m.strip() for m in campaign.message.split('---') if m.strip()]
@@ -305,11 +302,26 @@ class BackgroundSender:
         if not dialogs:
             return
 
-        recipients = db.session.query(Recipient).filter(
-            Recipient.assigned_account_id == account.id,
-            Recipient.user_id.isnot(None)
+        # FIX: Fetch all campaigns assigned to this account, not just running ones.
+        campaigns = db.session.query(Campaign).filter(
+            Campaign.selected_accounts.any(id=account.id)
         ).all()
-        peer_to_recipient = {str(r.user_id): r for r in recipients}
+        campaign_ids = [c.id for c in campaigns]
+
+        # FIX: Fetch recipients for these campaigns regardless of assigned_account_id.
+        # This allows receiving messages even if the initial campaign message failed to send.
+        recipients = db.session.query(Recipient).filter(
+            Recipient.campaign_id.in_(campaign_ids)
+        ).all()
+        
+        # FIX: Map by BOTH user_id and username to catch messages from unsent recipients
+        peer_to_recipient = {}
+        username_to_recipient = {}
+        for r in recipients:
+            if r.user_id:
+                peer_to_recipient[str(r.user_id)] = r
+            if r.username:
+                username_to_recipient[r.username.lower().lstrip('@')] = r
 
         for dialog in dialogs:
             checkpoint = db.session.query(ReplyCheckpoint).filter_by(
@@ -322,10 +334,33 @@ class BackgroundSender:
                 continue
 
             for msg in messages:
-                sender_id = str(msg.sender_id) if msg.sender_id else str(dialog.id)
-                recipient = peer_to_recipient.get(sender_id)
+                sender_id_str = str(msg.sender_id) if msg.sender_id else None
+                sender_username = None
+                
+                # Try to extract username from the message sender
+                if hasattr(msg, 'sender') and msg.sender and hasattr(msg.sender, 'username') and msg.sender.username:
+                    sender_username = msg.sender.username.lower().lstrip('@')
+                
+                recipient = None
+                if sender_id_str:
+                    recipient = peer_to_recipient.get(sender_id_str)
+                
+                if not recipient and sender_username:
+                    recipient = username_to_recipient.get(sender_username)
+                
                 if not recipient:
-                    continue
+                    continue # Message from someone not in our recipient list
+                
+                # FIX: If we found them by username but didn't have their user_id, save it!
+                if not recipient.user_id and sender_id_str:
+                    try:
+                        recipient.user_id = int(msg.sender_id)
+                    except ValueError:
+                        pass
+                
+                # FIX: If they aren't assigned to this account yet, assign them now
+                if not recipient.assigned_account_id:
+                    recipient.assigned_account_id = account.id
 
                 conv = db.session.query(Conversation).filter_by(recipient_id=recipient.id).first()
                 if not conv:
