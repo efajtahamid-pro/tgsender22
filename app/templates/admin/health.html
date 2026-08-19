@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2><i class="bi bi-heart-pulse-fill me-2"></i> System Health</h2>
+<hr>
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-gear-fill me-2"></i> Worker Status</div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <thead><tr><th>Worker Name</th><th>Type</th><th>Status</th><th>Last Heartbeat</th></tr></thead>
+                    <tbody>
+                        {% for w in workers %}
+                        <tr>
+                            <td>{{ w.worker_name }}</td>
+                            <td>{{ w.worker_type }}</td>
+                            <td><span class="badge bg-{{ 'success' if w.status == 'running' else 'danger' }}">{{ w.status }}</span></td>
+                            <td>{{ w.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="text-muted text-center">No workers registered.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-pie-chart-fill me-2"></i> Health Summary</div>
+            <div class="card-body">
+                <h6>Proxies</h6>
+                <p>Healthy: {{ proxy_stats.healthy }} | Unhealthy: {{ proxy_stats.unhealthy }}</p>
+                <hr>
+                <h6>Telegram Accounts</h6>
+                <p>Healthy: {{ account_stats.healthy }} | Disconnected: {{ account_stats.disconnected }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
