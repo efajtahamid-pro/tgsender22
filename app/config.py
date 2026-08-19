@@ -10,7 +10,6 @@ class Config:
 
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///instance/platform.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    # Removed check_same_thread from here to prevent PostgreSQL crashes
     SQLALCHEMY_ENGINE_OPTIONS = {}
 
     API_ID = int(os.getenv('API_ID', 0))
@@ -41,13 +40,6 @@ class Config:
     LOG_FILE = os.getenv('LOG_FILE', 'logs/app.log')
 
     SOCKETIO_ASYNC_MODE = os.getenv('SOCKETIO_ASYNC_MODE', 'threading')
-
-    @staticmethod
-    def validate():
-        required = ['SECRET_KEY', 'DATABASE_URL']
-        missing = [var for var in required if not os.getenv(var)]
-        if missing:
-            raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
 class DevelopmentConfig(Config):
     DEBUG = True
