@@ -1,4 +1,5 @@
-from flask import (Blueprint, render_template, redirect, url_for, flash, request, session, jsonify)
+from flask import (Blueprint, render_template, redirect, url_for, flash,
+                   request, session, jsonify)
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import datetime
@@ -8,8 +9,10 @@ from app.services.auth_service import (
     validate_strong_password, register_failed_login, reset_failed_login,
     is_locked, verify_totp, generate_totp_secret, get_totp_uri, generate_qr_base64
 )
+import pyotp
 
 auth_bp = Blueprint('auth', __name__)
+
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 @limiter.limit('10 per minute')
@@ -52,10 +55,10 @@ def login():
         reset_failed_login(user)
         user.last_login = datetime.utcnow()
         db.session.commit()
-
         return redirect(url_for('admin.dashboard' if user.role == 'admin' else 'employee.dashboard'))
 
     return render_template('auth/login.html')
+
 
 @auth_bp.route('/2fa/setup', methods=['GET', 'POST'])
 @login_required
@@ -68,6 +71,17 @@ def setup_2fa():
             secret = session.get('pending_totp_secret')
             if not secret:
                 flash('Session expired. Try again.', 'warning')
+                return redirect(url_for('auth.setup_2fa'))
+
+            # FIX: verify the TOTP code BEFORE persisting the secret.
+            # Previously, the code was ignored and 2FA was enabled unconditionally,
+            # allowing admins to lock themselves out with a broken authenticator.
+            if not code:
+                flash('Please enter the 6-digit code from your authenticator app.', 'danger')
+                return redirect(url_for('auth.setup_2fa'))
+
+            if not pyotp.TOTP(secret).verify(code, valid_window=1):
+                flash('Invalid verification code. Please try again.', 'danger')
                 return redirect(url_for('auth.setup_2fa'))
 
             current_user.totp_secret = secret
@@ -91,20 +105,29 @@ def setup_2fa():
             flash('2FA disabled.', 'info')
             return redirect(url_for('auth.setup_2fa'))
 
+    # Generate a new pending secret if none exists
     if not current_user.is_2fa_enabled and 'pending_totp_secret' not in session:
         session['pending_totp_secret'] = generate_totp_secret()
 
     qr_b64 = None
     uri = None
     if not current_user.is_2fa_enabled:
-        class _TmpUser: pass
+        class _TmpUser:
+            pass
         tmp = _TmpUser()
         tmp.totp_secret = session.get('pending_totp_secret')
         tmp.username = current_user.username
         uri = get_totp_uri(tmp)
         qr_b64 = generate_qr_base64(uri)
 
-    return render_template('auth/setup_2fa.html', qr_b64=qr_b64, secret=session.get('pending_totp_secret'), totp_uri=uri, is_enabled=current_user.is_2fa_enabled)
+    return render_template(
+        'auth/setup_2fa.html',
+        qr_b64=qr_b64,
+        secret=session.get('pending_totp_secret'),
+        totp_uri=uri,
+        is_enabled=current_user.is_2fa_enabled
+    )
+
 
 @auth_bp.route('/change-password', methods=['GET', 'POST'])
 @login_required
@@ -128,6 +151,7 @@ def change_password():
         return redirect(url_for('admin.dashboard' if current_user.role == 'admin' else 'employee.dashboard'))
 
     return render_template('auth/change_password.html')
+
 
 @auth_bp.route('/logout')
 @login_required
