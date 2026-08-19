@@ -1,89 +1,110 @@
 {% extends 'base.html' %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <div>
-        <h2 class="mb-0"><i class="bi bi-megaphone-fill me-2"></i> {{ campaign.name }}</h2>
-        <p class="text-muted mb-0">ID: {{ campaign.id }}</p>
-    </div>
-    <a href="{{ url_for('employee.dashboard') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back to Dashboard</a>
+    <h2 class="mb-0"><i class="bi bi-speedometer2 me-2"></i> Employee Dashboard</h2>
+    <span class="badge bg-danger rounded-pill p-2" id="totalUnread">{{ total_unread }} unread</span>
 </div>
-
-<div class="row mt-3">
-    <div class="col-md-3 mb-3">
-        <div class="card status-card bg-light text-dark h-100">
-            <div class="card-body">
-                <h6 class="text-uppercase text-muted small">Status</h6>
-                <h4 class="fw-bold text-primary">{{ campaign.status }}</h4>
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-bold">
+                <i class="bi bi-chat-dots me-2"></i> Active Conversations
+                <input type="text" id="searchInput" class="form-control form-control-sm mt-2" placeholder="Search..." onkeyup="filterConversations()">
             </div>
-        </div>
-    </div>
-    <div class="col-md-3 mb-3">
-        <div class="card status-card bg-light text-dark h-100">
-            <div class="card-body">
-                <h6 class="text-uppercase text-muted small">Total Recipients</h6>
-                <h4 class="fw-bold">{{ stats.total }}</h4>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-6 mb-3">
-        <div class="card status-card bg-light text-dark h-100">
-            <div class="card-body">
-                <h6 class="text-uppercase text-muted small">Progress</h6>
-                <div class="progress mt-2" style="height: 25px;">
-                    <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
-                         role="progressbar" 
-                         data-progress="{{ stats.progress }}">
-                        {{ stats.progress }}%
+            <ul class="list-group list-group-flush" id="convList" style="max-height: 70vh; overflow-y: auto;">
+                {% for c in conversations %}
+                <li class="list-group-item conv-item" data-conv="{{ c.id }}" onclick="loadChat(this.getAttribute('data-conv'))">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div><strong>@{{ c.recipient.username }}</strong><br><small class="text-muted">{{ c.campaign.name }}</small></div>
+                        {% if c.unread_count > 0 %}<span class="badge bg-danger rounded-pill unread-pill">{{ c.unread_count }}</span>{% endif %}
                     </div>
-                </div>
-            </div>
+                </li>
+                {% else %}<li class="list-group-item text-muted text-center">No active chats.</li>{% endfor %}
+            </ul>
         </div>
     </div>
-</div>
-
-<div class="card shadow-sm mb-4">
-    <div class="card-body">
-        <h6 class="text-uppercase text-muted small">Message</h6>
-        <p class="mb-0 mt-2" style="white-space: pre-wrap;">{{ campaign.message }}</p>
-    </div>
-</div>
-
-<div class="card shadow-sm">
-    <div class="card-header bg-white fw-bold"><i class="bi bi-list-ul me-2"></i> Recipients</div>
-    <div class="table-responsive" style="max-height: 500px;">
-        <table class="table table-sm table-hover mb-0">
-            <thead class="table-light sticky-top">
-                <tr>
-                    <th>#</th>
-                    <th>Username</th>
-                    <th>Status</th>
-                    <th>Error</th>
-                    <th>Account</th>
-                </tr>
-            </thead>
-            <tbody id="recTable">
-                {% for r in recipients %}
-                <tr id="rec-{{ r.id }}">
-                    <td>{{ loop.index }}</td>
-                    <td class="fw-bold">@{{ r.username }}</td>
-                    <td>
-                        <span class="badge bg-{{ 'success' if r.status == 'sent' else 'danger' if r.status == 'failed' else 'info' if r.status == 'replied' else 'dark' if r.status == 'dead_letter' else 'secondary' }}">
-                            {{ r.status }}
-                        </span>
-                    </td>
-                    <td class="text-danger small">{{ r.last_error or '' }}</td>
-                    <td>{{ r.account.phone if r.assigned_account_id else '-' }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="col-lg-7">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white fw-bold"><i class="bi bi-chat-text me-2"></i> <span id="chatHeader">Select a chat</span></div>
+            <div class="chat-window p-3" id="chatWindow" style="height: 60vh;"><p class="text-center text-muted mt-5">Select a conversation to start chatting</p></div>
+            <div class="card-footer bg-white p-2">
+                <form id="chatForm" onsubmit="return false;">
+                    <div class="input-group">
+                        <input type="text" id="msgInput" class="form-control" placeholder="Type a reply..." autocomplete="off" disabled>
+                        <button class="btn btn-primary" onclick="sendMessage()" disabled><i class="bi bi-send"></i></button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
-
 {% block scripts %}
 <script>
-    const initBar = document.getElementById('progressBar');
-    initBar.style.width = initBar.getAttribute('data-progress') + '%';
+const socket = io();
+let currentConvId = null;
+const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+socket.on('connect', () => socket.emit('join_conversations'));
+socket.on('new_reply', (data) => {
+    if (data.conversation_id === currentConvId) {
+        appendMessage(data.sender, data.content, data.timestamp || new Date().toISOString());
+        fetch('/employee/conversation/' + currentConvId + '/mark-read', { method: 'POST', headers: { 'X-CSRFToken': csrfToken } });
+    } else {
+        const li = document.querySelector('.conv-item[data-conv="' + data.conversation_id + '"]');
+        if (li) {
+            let pill = li.querySelector('.unread-pill');
+            if (!pill) { pill = document.createElement('span'); pill.className = 'badge bg-danger rounded-pill unread-pill'; pill.textContent = '0'; li.querySelector('.d-flex').appendChild(pill); }
+            pill.textContent = parseInt(pill.textContent) + 1;
+        }
+        const total = document.getElementById('totalUnread'); total.textContent = (parseInt(total.textContent) || 0) + 1 + ' unread';
+    }
+});
+setInterval(() => {
+    fetch('/employee/conversations').then(r => r.json()).then(data => {
+        let totalUnread = 0;
+        data.forEach(c => {
+            totalUnread += c.unread_count;
+            const li = document.querySelector('.conv-item[data-conv="' + c.id + '"]');
+            if (li) {
+                let pill = li.querySelector('.unread-pill');
+                if (c.unread_count > 0) { if (!pill) { pill = document.createElement('span'); pill.className = 'badge bg-danger rounded-pill unread-pill'; li.querySelector('.d-flex').appendChild(pill); } pill.textContent = c.unread_count; }
+                else if (pill) { pill.remove(); }
+            }
+        });
+        document.getElementById('totalUnread').textContent = totalUnread + ' unread';
+    });
+}, 15000);
+
+function loadChat(convId) {
+    currentConvId = convId;
+    document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+    const activeLi = document.querySelector('.conv-item[data-conv="' + convId + '"]');
+    if(activeLi) { activeLi.classList.add('active'); document.getElementById('chatHeader').textContent = activeLi.querySelector('strong').textContent; }
+    document.getElementById('msgInput').disabled = false;
+    document.querySelector('button[onclick="sendMessage()"]').disabled = false;
+    fetch('/employee/conversation/' + convId + '/mark-read', { method: 'POST', headers: { 'X-CSRFToken': csrfToken } }).then(() => { if (activeLi) { const pill = activeLi.querySelector('.unread-pill'); if (pill) pill.remove(); } });
+    fetch('/employee/conversation/' + convId + '/messages').then(r => r.json()).then(msgs => { const win = document.getElementById('chatWindow'); win.innerHTML = ''; msgs.forEach(m => appendMessage(m.sender, m.content, m.timestamp)); });
+}
+function appendMessage(sender, content, time) {
+    const win = document.getElementById('chatWindow'); const div = document.createElement('div'); div.className = 'message-bubble ' + sender;
+    const textNode = document.createElement('div'); textNode.textContent = content; div.appendChild(textNode);
+    const timeSpan = document.createElement('span'); timeSpan.className = 'message-time'; timeSpan.textContent = new Date(time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); div.appendChild(timeSpan);
+    win.appendChild(div); win.scrollTop = win.scrollHeight;
+}
+function sendMessage() {
+    const input = document.getElementById('msgInput'); const content = input.value.trim();
+    if (!content || !currentConvId) return;
+    fetch('/employee/conversation/' + currentConvId + '/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }, body: JSON.stringify({content: content})
+    }).then(r => r.json()).then(data => {
+        if (data.status === 'sent') { input.value = ''; appendMessage('employee', content, new Date().toISOString()); }
+        else { alert('Failed: ' + (data.error || 'Unknown')); }
+    });
+}
+function filterConversations() {
+    const q = document.getElementById('searchInput').value.toLowerCase();
+    document.querySelectorAll('.conv-item').forEach(li => { const text = li.textContent.toLowerCase(); li.style.display = text.includes(q) ? '' : 'none'; });
+}
+document.getElementById('msgInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
 </script>
 {% endblock %}
