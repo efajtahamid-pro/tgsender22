@@ -1,9 +1,10 @@
 from flask import (Blueprint, render_template, request, redirect, url_for,
-                   flash, jsonify)
+                   flash, jsonify, current_app)
 from flask_login import login_required, current_user
 from werkzeug.security import generate_password_hash
 from datetime import datetime
 import pandas as pd
+from sqlalchemy import func
 
 from app.extensions import db
 from app.models import (User, Proxy, TelegramAccount, Campaign, Recipient,
@@ -14,7 +15,6 @@ from app.services.campaign_service import get_campaign_stats
 from app.services.telegram_service import TelegramService
 
 admin_bp = Blueprint('admin', __name__)
-
 
 @admin_bp.before_request
 @login_required
@@ -33,7 +33,6 @@ def check_permissions():
     flash('Access denied.', 'danger')
     return redirect(url_for('employee.dashboard'))
 
-
 @admin_bp.route('/dashboard')
 def dashboard():
     return render_template(
@@ -44,13 +43,11 @@ def dashboard():
         employees=db.session.query(User).filter_by(role='employee').all()
     )
 
-
 # ─── Proxies ───
 
 @admin_bp.route('/proxies', methods=['GET'])
 def proxies():
     return render_template('admin/proxies.html', proxies=db.session.query(Proxy).all())
-
 
 @admin_bp.route('/proxies/add', methods=['POST'])
 def add_single_proxy():
@@ -68,7 +65,6 @@ def add_single_proxy():
     else:
         flash('Host and Port are required.', 'danger')
     return redirect(url_for('admin.proxies'))
-
 
 @admin_bp.route('/proxies/batch', methods=['POST'])
 def batch_add_proxies():
@@ -112,14 +108,12 @@ def batch_add_proxies():
         flash(f'CSV parse error: {e}', 'danger')
     return redirect(url_for('admin.proxies'))
 
-
 @admin_bp.route('/proxies/<int:id>/toggle', methods=['POST'])
 def toggle_proxy(id):
     proxy = db.session.get(Proxy, id)
     proxy.is_active = not proxy.is_active
     db.session.commit()
     return redirect(url_for('admin.proxies'))
-
 
 @admin_bp.route('/proxies/<int:id>/delete', methods=['POST'])
 def delete_proxy(id):
@@ -143,45 +137,51 @@ def delete_proxy(id):
     flash('Proxy deleted.', 'info')
     return redirect(url_for('admin.proxies'))
 
-
 # ─── Telegram Accounts ───
 
 @admin_bp.route('/accounts', methods=['GET'])
 def accounts():
-    proxies = db.session.query(Proxy).filter_by(is_active=True).all()
-    has_free_proxy = any(p.accounts.count() < 5 for p in proxies)
-    unproxied_count = db.session.query(TelegramAccount).filter(
-        TelegramAccount.proxy_id.is_(None),
-        TelegramAccount.is_active.is_(True)
+    max_capacity = current_app.config.get('MAX_ACCOUNTS_PER_PROXY', 5)
+    
+    # FIX: Removed N+1 query. Checks for any proxy with capacity in a single aggregate query.
+    capacity_count = db.session.query(
+        func.count(Proxy.id)
+    ).outerjoin(
+        TelegramAccount, Proxy.id == TelegramAccount.proxy_id
+    ).filter(
+        Proxy.is_active.is_(True),
+        Proxy.health_status == 'healthy'
+    ).group_by(
+        Proxy.id
+    ).having(
+        func.count(TelegramAccount.id) < max_capacity
     ).count()
+    
     return render_template(
         'admin/accounts.html',
         accounts=db.session.query(TelegramAccount).all(),
-        free_proxy_available=has_free_proxy or unproxied_count < 3
+        proxy_capacity_available=capacity_count > 0
     )
-
 
 @admin_bp.route('/accounts/add', methods=['POST'])
 def add_single_account():
     phone = request.form.get('phone')
-    # FIX: No longer requires api_id or api_hash from the form. Uses global .env vars.
     if phone:
         if db.session.query(TelegramAccount).filter_by(phone=phone).first():
             flash('Phone number already exists.', 'warning')
         else:
-            # Use empty strings for DB columns to satisfy NOT NULL constraints, but they are never used.
             acc = TelegramAccount(phone=phone, api_id="global", api_hash="global")
             ok, _, msg = assign_proxy_to_account(acc)
             if not ok:
                 flash(msg, 'danger')
             else:
+                # Assignment is done on the object, commit happens here as one transaction
                 db.session.add(acc)
                 db.session.commit()
                 flash(f'Account added! {msg}', 'success')
     else:
         flash('Phone number is required.', 'danger')
     return redirect(url_for('admin.accounts'))
-
 
 @admin_bp.route('/accounts/batch', methods=['POST'])
 def batch_add_accounts():
@@ -192,6 +192,7 @@ def batch_add_accounts():
 
     added = 0
     skipped = 0
+    failed = 0
     for phone in [p.strip() for p in phones_text.splitlines() if p.strip()]:
         if db.session.query(TelegramAccount).filter_by(phone=phone).first():
             skipped += 1
@@ -200,16 +201,16 @@ def batch_add_accounts():
         ok, _, msg = assign_proxy_to_account(acc)
         if not ok:
             flash(f'Stopped at {phone}: {msg}', 'danger')
+            failed += 1
             break
         db.session.add(acc)
         added += 1
     db.session.commit()
-    if skipped:
-        flash(f'{added} accounts added. {skipped} already existed (skipped).', 'success')
+    if skipped or failed:
+        flash(f'{added} accounts added. {skipped} skipped. {failed} failed.', 'warning')
     else:
         flash(f'{added} accounts added.', 'success')
     return redirect(url_for('admin.accounts'))
-
 
 @admin_bp.route('/accounts/<int:id>/verify', methods=['GET', 'POST'])
 def verify_account(id):
@@ -242,14 +243,12 @@ def verify_account(id):
     flash('Code sent to Telegram.', 'info')
     return render_template('admin/verify_code.html', account=account)
 
-
 @admin_bp.route('/accounts/<int:id>/toggle', methods=['POST'])
 def toggle_account(id):
     acc = db.session.get(TelegramAccount, id)
     acc.is_active = not acc.is_active
     db.session.commit()
     return redirect(url_for('admin.accounts'))
-
 
 @admin_bp.route('/accounts/<int:id>/delete', methods=['POST'])
 def delete_account(id):
@@ -268,7 +267,6 @@ def delete_account(id):
             db.session.rollback()
             flash(f'Error deleting account: {e}', 'danger')
     return redirect(url_for('admin.accounts'))
-
 
 # ─── Employees ───
 
@@ -303,7 +301,6 @@ def employees():
     return render_template('admin/employees.html',
                           employees=db.session.query(User).filter_by(role='employee').all())
 
-
 @admin_bp.route('/employees/<int:id>/toggle', methods=['POST'])
 def toggle_employee(id):
     if current_user.role != 'admin':
@@ -313,7 +310,6 @@ def toggle_employee(id):
     user.is_active = not user.is_active
     db.session.commit()
     return redirect(url_for('admin.employees'))
-
 
 # ─── Campaigns ───
 
@@ -350,7 +346,6 @@ def campaigns():
         employees=db.session.query(User).filter_by(role='employee', is_active=True, can_handle_replies=True).all(),
         accounts=db.session.query(TelegramAccount).filter_by(is_active=True, is_verified=True).all()
     )
-
 
 @admin_bp.route('/campaign/<int:id>', methods=['GET', 'POST'])
 def campaign_detail(id):
@@ -395,7 +390,6 @@ def campaign_detail(id):
         stats=get_campaign_stats(id)
     )
 
-
 @admin_bp.route('/campaign/<int:id>/start', methods=['POST'])
 def start_campaign(id):
     camp = db.session.get(Campaign, id)
@@ -417,7 +411,6 @@ def start_campaign(id):
     flash('Campaign started.', 'success')
     return redirect(url_for('admin.campaign_detail', id=id))
 
-
 @admin_bp.route('/campaign/<int:id>/pause', methods=['POST'])
 def pause_campaign(id):
     camp = db.session.get(Campaign, id)
@@ -426,7 +419,6 @@ def pause_campaign(id):
         db.session.commit()
         flash('Paused.', 'info')
     return redirect(url_for('admin.campaign_detail', id=id))
-
 
 @admin_bp.route('/campaign/<int:id>/delete', methods=['POST'])
 def delete_campaign(id):
@@ -440,7 +432,6 @@ def delete_campaign(id):
     flash('Campaign deleted.', 'info')
     return redirect(url_for('admin.campaigns'))
 
-
 # ─── Dead Letter Queue ───
 
 @admin_bp.route('/dead-letter')
@@ -449,7 +440,6 @@ def dead_letter_queue():
         'admin/dead_letter.html',
         items=db.session.query(Recipient).filter_by(status='dead_letter').all()
     )
-
 
 @admin_bp.route('/dead-letter/<int:rid>/retry', methods=['POST'])
 def retry_dead_letter(rid):
@@ -462,7 +452,6 @@ def retry_dead_letter(rid):
     db.session.commit()
     flash('Moved back to pending.', 'info')
     return redirect(url_for('admin.dead_letter_queue'))
-
 
 # ─── Health ───
 
@@ -496,7 +485,6 @@ def health_dashboard():
         }
     )
 
-
 # ─── Test Endpoints ───
 
 @admin_bp.route('/proxy/<int:id>/test', methods=['POST'])
@@ -519,7 +507,6 @@ def test_proxy(id):
         proxy.failure_count = (proxy.failure_count or 0) + 1
     db.session.commit()
     return jsonify({'status': 'healthy' if ok else 'unhealthy', 'latency': latency, 'error': err})
-
 
 @admin_bp.route('/account/<int:id>/test', methods=['POST'])
 def test_account(id):
