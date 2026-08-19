@@ -10,19 +10,10 @@
                     {% if require_2fa %}
                         <input type="hidden" name="username" value="{{ username }}">
                         <div class="alert alert-info">2FA code required for admin login.</div>
-                        <div class="mb-3">
-                            <label>Authenticator Code</label>
-                            <input type="text" name="totp_code" class="form-control text-center" pattern="[0-9]{6}" maxlength="6" required autofocus>
-                        </div>
+                        <div class="mb-3"><label>Authenticator Code</label><input type="text" name="totp_code" class="form-control text-center" pattern="[0-9]{6}" maxlength="6" required autofocus></div>
                     {% else %}
-                        <div class="mb-3">
-                            <label>Username</label>
-                            <input type="text" name="username" class="form-control" required autofocus>
-                        </div>
-                        <div class="mb-3">
-                            <label>Password</label>
-                            <input type="password" name="password" class="form-control" required>
-                        </div>
+                        <div class="mb-3"><label>Username</label><input type="text" name="username" class="form-control" required autofocus></div>
+                        <div class="mb-3"><label>Password</label><input type="password" name="password" class="form-control" required></div>
                     {% endif %}
                     <button type="submit" class="btn btn-primary w-100">Login</button>
                 </form>
