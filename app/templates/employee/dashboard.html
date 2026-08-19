@@ -44,21 +44,37 @@
 const socket = io();
 let currentConvId = null;
 const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
 socket.on('connect', () => socket.emit('join_conversations'));
+
+// FIX: Prevent duplicate messages by checking the last message
 socket.on('new_reply', (data) => {
     if (data.conversation_id === currentConvId) {
+        const win = document.getElementById('chatWindow');
+        const lastBubble = win.lastChild;
+        // Skip appending if we just optimistically added it
+        if (lastBubble && lastBubble.classList.contains('message-employee') && lastBubble.firstChild.textContent === data.content) {
+            return;
+        }
         appendMessage(data.sender, data.content, data.timestamp || new Date().toISOString());
         fetch('/employee/conversation/' + currentConvId + '/mark-read', { method: 'POST', headers: { 'X-CSRFToken': csrfToken } });
     } else {
         const li = document.querySelector('.conv-item[data-conv="' + data.conversation_id + '"]');
         if (li) {
             let pill = li.querySelector('.unread-pill');
-            if (!pill) { pill = document.createElement('span'); pill.className = 'badge bg-danger rounded-pill unread-pill'; pill.textContent = '0'; li.querySelector('.d-flex').appendChild(pill); }
+            if (!pill) { 
+                pill = document.createElement('span'); 
+                pill.className = 'badge bg-danger rounded-pill unread-pill'; 
+                pill.textContent = '0'; 
+                li.querySelector('.d-flex').appendChild(pill); 
+            }
             pill.textContent = parseInt(pill.textContent) + 1;
         }
-        const total = document.getElementById('totalUnread'); total.textContent = (parseInt(total.textContent) || 0) + 1 + ' unread';
+        const total = document.getElementById('totalUnread'); 
+        total.textContent = (parseInt(total.textContent) || 0) + 1 + ' unread';
     }
 });
+
 setInterval(() => {
     fetch('/employee/conversations').then(r => r.json()).then(data => {
         let totalUnread = 0;
@@ -67,7 +83,14 @@ setInterval(() => {
             const li = document.querySelector('.conv-item[data-conv="' + c.id + '"]');
             if (li) {
                 let pill = li.querySelector('.unread-pill');
-                if (c.unread_count > 0) { if (!pill) { pill = document.createElement('span'); pill.className = 'badge bg-danger rounded-pill unread-pill'; li.querySelector('.d-flex').appendChild(pill); } pill.textContent = c.unread_count; }
+                if (c.unread_count > 0) { 
+                    if (!pill) { 
+                        pill = document.createElement('span'); 
+                        pill.className = 'badge bg-danger rounded-pill unread-pill'; 
+                        li.querySelector('.d-flex').appendChild(pill); 
+                    } 
+                    pill.textContent = c.unread_count; 
+                }
                 else if (pill) { pill.remove(); }
             }
         });
@@ -79,32 +102,76 @@ function loadChat(convId) {
     currentConvId = convId;
     document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
     const activeLi = document.querySelector('.conv-item[data-conv="' + convId + '"]');
-    if(activeLi) { activeLi.classList.add('active'); document.getElementById('chatHeader').textContent = activeLi.querySelector('strong').textContent; }
+    if(activeLi) { 
+        activeLi.classList.add('active'); 
+        document.getElementById('chatHeader').textContent = activeLi.querySelector('strong').textContent; 
+    }
     document.getElementById('msgInput').disabled = false;
     document.querySelector('button[onclick="sendMessage()"]').disabled = false;
-    fetch('/employee/conversation/' + convId + '/mark-read', { method: 'POST', headers: { 'X-CSRFToken': csrfToken } }).then(() => { if (activeLi) { const pill = activeLi.querySelector('.unread-pill'); if (pill) pill.remove(); } });
-    fetch('/employee/conversation/' + convId + '/messages').then(r => r.json()).then(msgs => { const win = document.getElementById('chatWindow'); win.innerHTML = ''; msgs.forEach(m => appendMessage(m.sender, m.content, m.timestamp)); });
-}
-function appendMessage(sender, content, time) {
-    const win = document.getElementById('chatWindow'); const div = document.createElement('div'); div.className = 'message-bubble ' + sender;
-    const textNode = document.createElement('div'); textNode.textContent = content; div.appendChild(textNode);
-    const timeSpan = document.createElement('span'); timeSpan.className = 'message-time'; timeSpan.textContent = new Date(time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); div.appendChild(timeSpan);
-    win.appendChild(div); win.scrollTop = win.scrollHeight;
-}
-function sendMessage() {
-    const input = document.getElementById('msgInput'); const content = input.value.trim();
-    if (!content || !currentConvId) return;
-    fetch('/employee/conversation/' + currentConvId + '/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }, body: JSON.stringify({content: content})
-    }).then(r => r.json()).then(data => {
-        if (data.status === 'sent') { input.value = ''; appendMessage('employee', content, new Date().toISOString()); }
-        else { alert('Failed: ' + (data.error || 'Unknown')); }
+    fetch('/employee/conversation/' + convId + '/mark-read', { method: 'POST', headers: { 'X-CSRFToken': csrfToken } }).then(() => { 
+        if (activeLi) { 
+            const pill = activeLi.querySelector('.unread-pill'); 
+            if (pill) pill.remove(); 
+        } 
+    });
+    fetch('/employee/conversation/' + convId + '/messages').then(r => r.json()).then(msgs => { 
+        const win = document.getElementById('chatWindow'); 
+        win.innerHTML = ''; 
+        msgs.forEach(m => appendMessage(m.sender, m.content, m.timestamp)); 
     });
 }
+
+function appendMessage(sender, content, time) {
+    const win = document.getElementById('chatWindow'); 
+    const div = document.createElement('div'); 
+    div.className = 'message-bubble ' + sender;
+    const textNode = document.createElement('div'); 
+    textNode.textContent = content; 
+    div.appendChild(textNode);
+    const timeSpan = document.createElement('span'); 
+    timeSpan.className = 'message-time'; 
+    timeSpan.textContent = new Date(time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); 
+    div.appendChild(timeSpan);
+    win.appendChild(div); 
+    win.scrollTop = win.scrollHeight;
+}
+
+// FIX: Optimistic UI. Appends message instantly to chat box so you see it immediately.
+function sendMessage() {
+    const input = document.getElementById('msgInput'); 
+    const content = input.value.trim();
+    if (!content || !currentConvId) return;
+    
+    // Clear input and show message immediately
+    input.value = '';
+    appendMessage('employee', content, new Date().toISOString());
+
+    fetch('/employee/conversation/' + currentConvId + '/send', {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }, 
+        body: JSON.stringify({content: content})
+    }).then(r => {
+        if (!r.ok) return r.json().then(err => { throw err; });
+        return r.json();
+    }).then(data => {
+        if (data.status !== 'sent') {
+            alert('Failed to send: ' + (data.error || 'Unknown error. Check if the Telegram account is connected.'));
+        }
+    }).catch(err => {
+        alert('Failed to send: ' + (err.error || err.message || 'Network error. Is the server running?'));
+    });
+}
+
 function filterConversations() {
     const q = document.getElementById('searchInput').value.toLowerCase();
-    document.querySelectorAll('.conv-item').forEach(li => { const text = li.textContent.toLowerCase(); li.style.display = text.includes(q) ? '' : 'none'; });
+    document.querySelectorAll('.conv-item').forEach(li => { 
+        const text = li.textContent.toLowerCase(); 
+        li.style.display = text.includes(q) ? '' : 'none'; 
+    });
 }
-document.getElementById('msgInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
+
+document.getElementById('msgInput').addEventListener('keypress', e => { 
+    if (e.key === 'Enter') sendMessage(); 
+});
 </script>
 {% endblock %}
