@@ -35,7 +35,6 @@ class TelegramService:
         if self._initialized:
             return
         
-        # FIX: Safe parsing of API_ID to prevent background worker crashes
         try:
             self.api_id = int(os.getenv('API_ID', 0))
         except (ValueError, TypeError):
@@ -297,6 +296,12 @@ class TelegramService:
             msgs = []
             async for msg in client.iter_messages(dialog, limit=20, min_id=min_id):
                 if not msg.out:
+                    # FIX: Ensure the sender entity is loaded so we can check their username
+                    if not msg.sender:
+                        try:
+                            await msg.get_sender()
+                        except Exception:
+                            pass
                     msgs.append(msg)
             return msgs
         try:
