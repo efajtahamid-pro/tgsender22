@@ -10,8 +10,7 @@ def assign_proxy_to_account(account):
         return True, best, "Assigned to proxy."
 
     unproxied_count = db.session.query(TelegramAccount).filter(
-        TelegramAccount.proxy_id.is_(None), 
-        TelegramAccount.is_active == True
+        TelegramAccount.proxy_id.is_(None), TelegramAccount.is_active == True
     ).count()
     
     if unproxied_count < 3:
