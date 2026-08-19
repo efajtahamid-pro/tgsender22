@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from app.extensions import db, socketio
 from app.models import (
     Campaign, Recipient, TelegramAccount, Conversation, Message,
-    ReplyCheckpoint, SendLog, WorkerHeartbeat
+    ReplyCheckpoint, SendLog, WorkerHeartbeat, User
 )
 from app.services.telegram_service import TelegramService
 from flask import current_app
@@ -149,8 +149,6 @@ class BackgroundSender:
                 }, room=f'campaign_{campaign.id}')
             return
 
-        # FIX: Removed the health_status check. We will attempt to send with any active/verified account.
-        # If the account is actually disconnected, send_message_sync will handle the error and retry/dead-letter.
         accounts = [acc for acc in campaign.selected_accounts
                      if acc.is_active and acc.is_verified]
 
@@ -162,7 +160,6 @@ class BackgroundSender:
                 'campaign_id': campaign.id, 'status': 'paused',
                 'reason': 'no_active_accounts'
             }, room=f'campaign_{campaign.id}')
-            logger.warning("Campaign %s paused — no active/verified accounts.", campaign.id)
             return
 
         messages = [m.strip() for m in campaign.message.split('---') if m.strip()]
@@ -253,10 +250,16 @@ class BackgroundSender:
             log_entry.telegram_message_id = result.get('telegram_message_id')
 
             if not recipient.conversation:
+                # FIX: If campaign has no employee, default to first admin so they can see/reply to it
+                emp_id = campaign.employee_id
+                if not emp_id:
+                    admin = db.session.query(User).filter_by(role='admin', is_active=True).first()
+                    emp_id = admin.id if admin else None
+                    
                 db.session.add(Conversation(
                     recipient_id=recipient.id,
                     campaign_id=campaign.id,
-                    employee_id=campaign.employee_id
+                    employee_id=emp_id
                 ))
                 db.session.flush()
 
@@ -302,19 +305,15 @@ class BackgroundSender:
         if not dialogs:
             return
 
-        # FIX: Fetch all campaigns assigned to this account, not just running ones.
         campaigns = db.session.query(Campaign).filter(
             Campaign.selected_accounts.any(id=account.id)
         ).all()
         campaign_ids = [c.id for c in campaigns]
 
-        # FIX: Fetch recipients for these campaigns regardless of assigned_account_id.
-        # This allows receiving messages even if the initial campaign message failed to send.
         recipients = db.session.query(Recipient).filter(
             Recipient.campaign_id.in_(campaign_ids)
         ).all()
         
-        # FIX: Map by BOTH user_id and username to catch messages from unsent recipients
         peer_to_recipient = {}
         username_to_recipient = {}
         for r in recipients:
@@ -337,7 +336,6 @@ class BackgroundSender:
                 sender_id_str = str(msg.sender_id) if msg.sender_id else None
                 sender_username = None
                 
-                # Try to extract username from the message sender
                 if hasattr(msg, 'sender') and msg.sender and hasattr(msg.sender, 'username') and msg.sender.username:
                     sender_username = msg.sender.username.lower().lstrip('@')
                 
@@ -349,25 +347,29 @@ class BackgroundSender:
                     recipient = username_to_recipient.get(sender_username)
                 
                 if not recipient:
-                    continue # Message from someone not in our recipient list
+                    continue 
                 
-                # FIX: If we found them by username but didn't have their user_id, save it!
                 if not recipient.user_id and sender_id_str:
                     try:
                         recipient.user_id = int(msg.sender_id)
                     except ValueError:
                         pass
                 
-                # FIX: If they aren't assigned to this account yet, assign them now
                 if not recipient.assigned_account_id:
                     recipient.assigned_account_id = account.id
 
                 conv = db.session.query(Conversation).filter_by(recipient_id=recipient.id).first()
                 if not conv:
+                    # FIX: Default to admin if unassigned
+                    emp_id = recipient.campaign.employee_id
+                    if not emp_id:
+                        admin = db.session.query(User).filter_by(role='admin', is_active=True).first()
+                        emp_id = admin.id if admin else None
+                        
                     conv = Conversation(
                         recipient_id=recipient.id,
                         campaign_id=recipient.campaign_id,
-                        employee_id=recipient.campaign.employee_id
+                        employee_id=emp_id
                     )
                     db.session.add(conv)
                     db.session.flush()
@@ -417,7 +419,8 @@ class BackgroundSender:
 
     def send_employee_reply(self, conv_id, content, employee_id):
         conv = db.session.get(Conversation, conv_id)
-        if not conv or conv.employee_id != employee_id:
+        # FIX: Allow Admins to reply to any conversation, even if employee_id doesn't match
+        if not conv or (conv.employee_id != employee_id and not db.session.get(User, employee_id).role == 'admin'):
             return False, 'Unauthorized'
 
         recipient = conv.recipient
