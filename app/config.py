@@ -8,7 +8,9 @@ class Config:
     APP_ENV = os.getenv('APP_ENV', 'development')
     DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///instance/platform.db')
+    # FIX: was 'sqlite:///instance/platform.db' which resolved to
+    #      instance/instance/platform.db (nested dir never created)
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///platform.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {}
 
@@ -26,6 +28,13 @@ class Config:
     PERMANENT_SESSION_LIFETIME = int(os.getenv('SESSION_LIFETIME', 86400))
     WTF_CSRF_TIME_LIMIT = 3600
 
+    # Session string encryption at rest (Fernet)
+    SESSION_ENCRYPTION_KEY = os.getenv('SESSION_ENCRYPTION_KEY', '')
+
+    # SocketIO cross-process message queue (Redis)
+    SOCKETIO_MESSAGE_QUEUE = os.getenv('SOCKETIO_MESSAGE_QUEUE', '')
+    SOCKETIO_ASYNC_MODE = os.getenv('SOCKETIO_ASYNC_MODE', 'threading')
+
     DEFAULT_DAILY_LIMIT = int(os.getenv('DEFAULT_DAILY_LIMIT', 50))
     RATE_LIMIT_DEFAULT = os.getenv('RATE_LIMIT_DEFAULT', '200 per minute')
 
@@ -39,7 +48,6 @@ class Config:
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
     LOG_FILE = os.getenv('LOG_FILE', 'logs/app.log')
 
-    SOCKETIO_ASYNC_MODE = os.getenv('SOCKETIO_ASYNC_MODE', 'threading')
 
 class DevelopmentConfig(Config):
     DEBUG = True
