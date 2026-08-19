@@ -3,7 +3,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
 from flask_login import login_required, current_user
 from datetime import datetime
 from app.extensions import db, socketio
-from app.models import Campaign, Conversation, Message, Recipient
+from app.models import Campaign, Conversation, Message, Recipient, User
 from app.services.campaign_service import get_campaign_stats
 from app.services.telegram_service import TelegramService
 
@@ -13,6 +13,7 @@ employee_bp = Blueprint('employee', __name__)
 @employee_bp.before_request
 @login_required
 def check_employee():
+    # FIX: Allow Admins full access to the employee dashboard to handle unassigned chats
     if current_user.role not in ('employee', 'admin'):
         flash('Access required', 'warning')
         return redirect(url_for('admin.dashboard'))
@@ -20,11 +21,18 @@ def check_employee():
 
 @employee_bp.route('/dashboard')
 def dashboard():
-    campaigns = db.session.query(Campaign).filter_by(employee_id=current_user.id) \
-        .order_by(Campaign.created_at.desc()).all()
-    conversations = db.session.query(Conversation).filter_by(
-        employee_id=current_user.id, is_active=True
-    ).order_by(Conversation.last_message_at.desc()).all()
+    # FIX: If admin, show all active conversations. If employee, show only theirs.
+    if current_user.role == 'admin':
+        conversations = db.session.query(Conversation).filter_by(is_active=True) \
+            .order_by(Conversation.last_message_at.desc()).all()
+        campaigns = db.session.query(Campaign).order_by(Campaign.created_at.desc()).all()
+    else:
+        conversations = db.session.query(Conversation).filter_by(
+            employee_id=current_user.id, is_active=True
+        ).order_by(Conversation.last_message_at.desc()).all()
+        campaigns = db.session.query(Campaign).filter_by(employee_id=current_user.id) \
+            .order_by(Campaign.created_at.desc()).all()
+
     total_unread = sum(c.unread_count for c in conversations)
     return render_template(
         'employee/dashboard.html',
@@ -37,7 +45,7 @@ def dashboard():
 @employee_bp.route('/campaign/<int:id>')
 def campaign_detail(id):
     campaign = db.session.get(Campaign, id)
-    if not campaign or campaign.employee_id != current_user.id:
+    if not campaign or (campaign.employee_id != current_user.id and current_user.role != 'admin'):
         flash('Campaign not found or not assigned to you.', 'danger')
         return redirect(url_for('employee.dashboard'))
 
@@ -58,9 +66,15 @@ def campaign_detail(id):
 
 @employee_bp.route('/conversations')
 def conversations():
-    convs = db.session.query(Conversation).filter_by(
-        employee_id=current_user.id, is_active=True
-    ).order_by(Conversation.last_message_at.desc()).all()
+    # FIX: Admins fetch all conversations, employees fetch theirs
+    if current_user.role == 'admin':
+        convs = db.session.query(Conversation).filter_by(is_active=True) \
+            .order_by(Conversation.last_message_at.desc()).all()
+    else:
+        convs = db.session.query(Conversation).filter_by(
+            employee_id=current_user.id, is_active=True
+        ).order_by(Conversation.last_message_at.desc()).all()
+        
     return jsonify([{
         'id': c.id,
         'recipient_username': c.recipient.username,
@@ -73,7 +87,8 @@ def conversations():
 @employee_bp.route('/conversation/<int:conv_id>/messages')
 def get_messages(conv_id):
     conv = db.session.get(Conversation, conv_id)
-    if not conv or conv.employee_id != current_user.id:
+    # FIX: Admins can read any conversation
+    if not conv or (conv.employee_id != current_user.id and current_user.role != 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
     msgs = db.session.query(Message).filter_by(conversation_id=conv_id) \
         .order_by(Message.timestamp.asc()).all()
@@ -86,7 +101,8 @@ def get_messages(conv_id):
 @employee_bp.route('/conversation/<int:conv_id>/send', methods=['POST'])
 def send_reply(conv_id):
     conv = db.session.get(Conversation, conv_id)
-    if not conv or conv.employee_id != current_user.id:
+    # FIX: Admins can reply to any conversation
+    if not conv or (conv.employee_id != current_user.id and current_user.role != 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     content = request.json.get('content', '').strip()
@@ -98,8 +114,6 @@ def send_reply(conv_id):
     if not account:
         return jsonify({'error': 'No sending account found'}), 400
     
-    # FIX: Fallback to username if user_id is missing.
-    # This allows employees to reply even if the initial campaign message failed to capture the user_id.
     target = recipient.user_id
     if not target and recipient.username:
         target = recipient.username.lstrip('@').lower()
@@ -136,7 +150,8 @@ def send_reply(conv_id):
 @employee_bp.route('/conversation/<int:conv_id>/mark-read', methods=['POST'])
 def mark_read(conv_id):
     conv = db.session.get(Conversation, conv_id)
-    if not conv or conv.employee_id != current_user.id:
+    # FIX: Admins can mark any conversation as read
+    if not conv or (conv.employee_id != current_user.id and current_user.role != 'admin'):
         return jsonify({'error': 'Unauthorized'}), 403
     conv.unread_count = 0
     db.session.commit()
