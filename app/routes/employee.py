@@ -97,12 +97,19 @@ def send_reply(conv_id):
     account = recipient.account
     if not account:
         return jsonify({'error': 'No sending account found'}), 400
-    if not recipient.user_id:
-        return jsonify({'error': 'Cannot reply: Recipient user_id is missing'}), 400
+    
+    # FIX: Fallback to username if user_id is missing.
+    # This allows employees to reply even if the initial campaign message failed to capture the user_id.
+    target = recipient.user_id
+    if not target and recipient.username:
+        target = recipient.username.lstrip('@').lower()
+        
+    if not target:
+        return jsonify({'error': 'Recipient has no username or user_id. Cannot send.'}), 400
 
     tg = TelegramService()
     result = tg.send_message_sync(
-        account=account, target=recipient.user_id, message=content,
+        account=account, target=target, message=content,
         campaign_id=recipient.campaign_id, recipient_db_id=recipient.id
     )
 
