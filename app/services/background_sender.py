@@ -56,7 +56,6 @@ class BackgroundSender:
 
             poll_interval = current_app.config.get('REPLY_POLL_INTERVAL_SECONDS', 30)
             last_poll_time = 0
-            loop_count = 0
 
             while self.running:
                 try:
@@ -64,19 +63,24 @@ class BackgroundSender:
                     self._reset_daily_limits()
                     self._process_campaigns()
 
-                    # Poll replies at configured interval
                     if time.time() - last_poll_time >= poll_interval:
                         self._poll_replies()
                         last_poll_time = time.time()
 
-                    loop_count += 1
                     time.sleep(5)
+                    
+                    # FIX: Critical for Gunicorn/web responsiveness.
+                    # Removing the session returns the DB connection to the pool
+                    # and releases any transaction locks so the web UI can query the DB instantly.
+                    db.session.remove()
+                    
                 except Exception as e:
                     logger.exception("Background loop error: %s", e)
+                    db.session.rollback()
+                    db.session.remove()
                     time.sleep(10)
 
     def _update_heartbeat(self, name, status, error=None):
-        """FIX: ORM-based upsert — works on both SQLite and PostgreSQL."""
         try:
             hb = db.session.query(WorkerHeartbeat).filter_by(worker_name=name).first()
             if hb:
@@ -98,11 +102,6 @@ class BackgroundSender:
             logger.error("Heartbeat write failed: %s", e)
 
     def _reset_stuck_recipients(self):
-        """
-        FIX: Only reset recipients stuck in 'sending' for >5 minutes.
-        Previously reset ALL sending recipients instantly, killing in-flight sends.
-        Uses SendLog.started_at as the timestamp proxy.
-        """
         cutoff = datetime.utcnow() - timedelta(minutes=5)
         stuck = db.session.query(Recipient).filter_by(status='sending').all()
         reset_count = 0
@@ -143,7 +142,6 @@ class BackgroundSender:
         ).limit(batch_size).all()
 
         if not pending:
-            # Check if all recipients are resolved
             still_sending = db.session.query(Recipient).filter_by(
                 campaign_id=campaign.id, status='sending'
             ).first()
@@ -154,7 +152,6 @@ class BackgroundSender:
                 socketio.emit('campaign_status', {
                     'campaign_id': campaign.id, 'status': 'completed'
                 }, room=f'campaign_{campaign.id}')
-                logger.info("Campaign %s completed.", campaign.id)
             return
 
         accounts = [acc for acc in campaign.selected_accounts
@@ -169,7 +166,6 @@ class BackgroundSender:
                 'campaign_id': campaign.id, 'status': 'paused',
                 'reason': 'no_healthy_accounts'
             }, room=f'campaign_{campaign.id}')
-            logger.warning("Campaign %s paused — no healthy accounts.", campaign.id)
             return
 
         messages = [m.strip() for m in campaign.message.split('---') if m.strip()]
@@ -187,7 +183,6 @@ class BackgroundSender:
                     'campaign_id': campaign.id, 'status': 'paused',
                     'reason': 'daily_limit_reached'
                 }, room=f'campaign_{campaign.id}')
-                logger.info("Campaign %s paused — daily limit reached.", campaign.id)
                 return
 
             account = self._get_available_account(accounts)
@@ -199,7 +194,6 @@ class BackgroundSender:
                     'campaign_id': campaign.id, 'status': 'paused',
                     'reason': 'rate_limit_reached'
                 }, room=f'campaign_{campaign.id}')
-                logger.info("Campaign %s paused — all accounts at rate limit.", campaign.id)
                 return
 
             recipient.status = 'sending'
@@ -224,7 +218,6 @@ class BackgroundSender:
         max_retries = current_app.config.get('MAX_RETRY_ATTEMPTS', 3)
         base_delay = current_app.config.get('RETRY_BASE_DELAY', 2.0)
 
-        # FIX: prefer numeric user_id for retries (avoids re-resolving username)
         if recipient.user_id:
             target = recipient.user_id
         elif recipient.username:
@@ -276,8 +269,6 @@ class BackgroundSender:
                 'status': 'sent',
                 'assigned_account': account.phone
             }, room=f'campaign_{campaign.id}')
-            logger.info("Sent to @%s via account %s (campaign %s)",
-                        recipient.username, account.phone, campaign.id)
 
         else:
             recipient.retry_count += 1
@@ -295,12 +286,8 @@ class BackgroundSender:
                     'status': 'dead_letter',
                     'last_error': recipient.last_error
                 }, room=f'campaign_{campaign.id}')
-                logger.warning("Dead-lettered @%s: %s (campaign %s)",
-                               recipient.username, recipient.last_error, campaign.id)
             else:
                 recipient.status = 'pending'
-                logger.info("Will retry @%s (attempt %d/%d): %s",
-                            recipient.username, recipient.retry_count, max_retries, recipient.last_error)
 
     def _poll_replies(self):
         self._update_heartbeat('reply_worker', 'running')
@@ -340,8 +327,6 @@ class BackgroundSender:
                 if not recipient:
                     continue
 
-                # FIX: use explicit query instead of lazy-loaded relationship
-                # to avoid stale None cache after in-session creation
                 conv = db.session.query(Conversation).filter_by(recipient_id=recipient.id).first()
                 if not conv:
                     conv = Conversation(
@@ -352,7 +337,6 @@ class BackgroundSender:
                     db.session.add(conv)
                     db.session.flush()
 
-                # Dedup by telegram_message_id
                 if db.session.query(Message).filter_by(telegram_message_id=msg.id).first():
                     continue
 
@@ -395,8 +379,6 @@ class BackgroundSender:
                     'recipient_id': recipient.id,
                     'status': 'replied'
                 }, room=f'campaign_{recipient.campaign_id}')
-                logger.info("Reply received from @%s (account %s, conv %s)",
-                            recipient.username, account.phone, conv.id)
 
     def send_employee_reply(self, conv_id, content, employee_id):
         conv = db.session.get(Conversation, conv_id)
@@ -407,11 +389,16 @@ class BackgroundSender:
         account = recipient.account
         if not account:
             return False, 'No sending account found'
-        if not recipient.user_id:
-            return False, 'Cannot reply: Recipient user_id is missing'
+            
+        target = recipient.user_id
+        if not target and recipient.username:
+            target = recipient.username.lstrip('@').lower()
+            
+        if not target:
+            return False, 'Cannot reply: Recipient has no username or user_id'
 
         result = self.telegram.send_message_sync(
-            account, recipient.user_id, content,
+            account, target, content,
             campaign_id=recipient.campaign_id, recipient_db_id=recipient.id
         )
 
