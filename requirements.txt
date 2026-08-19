@@ -16,3 +16,5 @@ pandas==2.1.4
 gunicorn==21.2.0
 psycopg2-binary
 PySocks==1.7.1
+cryptography==42.0.5
+redis==5.0.1
