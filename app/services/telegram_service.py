@@ -2,17 +2,13 @@ import os
 import asyncio
 import threading
 import time
-import socket
 import socks
 import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import (
-    FloodWaitError,
-    PhoneCodeInvalidError,
-    PhoneCodeExpiredError,
-    SessionPasswordNeededError,
-    RPCError,
+    FloodWaitError, PhoneCodeInvalidError, PhoneCodeExpiredError,
+    SessionPasswordNeededError, RPCError,
 )
 from app.extensions import db
 from app.models import TelegramAccount, Proxy
@@ -50,8 +46,7 @@ class TelegramService:
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=timeout)
 
     def _get_proxy(self, proxy):
-        if not proxy:
-            return None
+        if not proxy: return None
         return (proxy.proxy_type, proxy.host, proxy.port, proxy.username, proxy.password)
 
     def _get_client_lock(self, account_id):
@@ -62,11 +57,7 @@ class TelegramService:
     async def _build_client(self, account):
         proxy = self._get_proxy(account.proxy)
         session = StringSession(account.session_string or '')
-        # Added timeout=10 and connection_retries=2 to prevent 30s hangs on dead proxies
-        client = TelegramClient(
-            session, self.api_id, self.api_hash, proxy=proxy, 
-            timeout=10, connection_retries=2, retry_delay=1
-        )
+        client = TelegramClient(session, self.api_id, self.api_hash, proxy=proxy, timeout=10, connection_retries=2, retry_delay=1)
         return client
 
     async def _ensure_connected(self, account):
@@ -74,28 +65,22 @@ class TelegramService:
             if account.id in self.clients:
                 client = self.clients[account.id]
                 if client.is_connected():
-                    if await client.is_user_authorized():
-                        return client
+                    if await client.is_user_authorized(): return client
                     else:
                         await client.disconnect()
                         del self.clients[account.id]
-                else:
-                    del self.clients[account.id]
+                else: del self.clients[account.id]
 
             client = await self._build_client(account)
             await client.connect()
-
             if not await client.is_user_authorized():
-                if not account.session_string:
-                    return None
+                if not account.session_string: return None
                 await client.disconnect()
                 return None
-
             self.clients[account.id] = client
             return client
 
     def init_all_clients(self):
-        """Initialize all verified clients on startup."""
         with db.session.no_autoflush:
             accounts = db.session.query(TelegramAccount).filter_by(is_active=True, is_verified=True).all()
             for acc in accounts:
@@ -105,63 +90,50 @@ class TelegramService:
                         acc.health_status = 'healthy'
                         acc.last_successful_connection = datetime.utcnow()
                         acc.last_error = None
-                        logger.info('Client connected on startup', extra={'account_phone': acc.phone})
                     else:
                         acc.health_status = 'disconnected'
-                        acc.last_error = 'Failed to authorize or connect'
+                        acc.last_error = 'Failed to authorize'
                 except TimeoutError:
                     acc.health_status = 'disconnected'
                     acc.last_error = 'Connection timed out (Check Proxy)'
-                    logger.error('Timeout connecting client on startup', extra={'account_phone': acc.phone})
                 except Exception as e:
                     acc.health_status = 'disconnected'
                     acc.last_error = str(e)
-                    logger.exception('Error connecting client on startup', extra={'account_phone': acc.phone})
                 db.session.commit()
 
     def get_client(self, account):
         return self._run_async(self._ensure_connected(account), timeout=20)
 
     def test_proxy_connection(self, proxy: Proxy):
-        """Tests proxy reachability without Telegram."""
         try:
             s = socks.socksocket()
             if proxy.proxy_type == 'socks5': s.set_proxy(socks.SOCKS5, proxy.host, proxy.port, True, proxy.username, proxy.password)
             elif proxy.proxy_type == 'http': s.set_proxy(socks.HTTP, proxy.host, proxy.port, True, proxy.username, proxy.password)
-            
             s.settimeout(10)
             start = time.time()
             s.connect(("api.telegram.org", 443))
             latency = int((time.time() - start) * 1000)
             s.close()
             return True, latency, None
-        except Exception as e:
-            return False, 0, str(e)
+        except Exception as e: return False, 0, str(e)
 
     def test_account_health(self, account: TelegramAccount):
-        """Verifies Telegram session and proxy health."""
         async def _check():
             client = await self._ensure_connected(account)
-            if not client:
-                return False, "Client connection failed"
+            if not client: return False, "Client connection failed"
             try:
                 me = await client.get_me()
-                if me:
-                    return True, "Healthy"
+                if me: return True, "Healthy"
                 return False, "Unauthorized"
-            except Exception as e:
-                return False, str(e)
+            except Exception as e: return False, str(e)
 
         try:
             if account.proxy:
                 p_ok, _, p_err = self.test_proxy_connection(account.proxy)
-                if not p_ok:
-                    return False, f"Proxy failed: {p_err}"
-
+                if not p_ok: return False, f"Proxy failed: {p_err}"
             ok, msg = self._run_async(_check(), timeout=20)
             return ok, msg
-        except Exception as e:
-            return False, str(e)
+        except Exception as e: return False, str(e)
 
     def send_code(self, account):
         async def _send():
@@ -175,10 +147,9 @@ class TelegramService:
             return result.phone_code_hash
 
         try:
-            phone_code_hash = self._run_async(_send(), timeout=20)
-            return {'status': 'success', 'phone_code_hash': phone_code_hash}
-        except FloodWaitError as e:
-            return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
+            hash = self._run_async(_send(), timeout=20)
+            return {'status': 'success', 'phone_code_hash': hash}
+        except FloodWaitError as e: return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
         except Exception as e:
             logger.exception('send_code failed', extra={'account_phone': account.phone})
             return {'status': 'error', 'message': str(e)}
@@ -190,14 +161,11 @@ class TelegramService:
                 client = await self._build_client(account)
                 await client.connect()
                 self.clients[account.id] = client
-
             try:
                 await client.sign_in(phone=account.phone, code=code, phone_code_hash=phone_code_hash)
             except SessionPasswordNeededError:
-                if password:
-                    await client.sign_in(password=password)
-                else:
-                    return {'status': 'error', 'message': '2FA password required', 'requires_password': True}
+                if password: await client.sign_in(password=password)
+                else: return {'status': 'error', 'message': '2FA password required', 'requires_password': True}
 
             if await client.is_user_authorized():
                 account.session_string = client.session.save()
@@ -207,46 +175,30 @@ class TelegramService:
                 account.last_successful_connection = datetime.utcnow()
                 db.session.commit()
                 return {'status': 'success'}
-            else:
-                return {'status': 'error', 'message': 'Not authorized after sign-in'}
+            else: return {'status': 'error', 'message': 'Not authorized'}
 
-        try:
-            result = self._run_async(_sign_in(), timeout=20)
-            return result
-        except PhoneCodeInvalidError:
-            return {'status': 'error', 'message': 'Invalid code'}
-        except PhoneCodeExpiredError:
-            return {'status': 'error', 'message': 'Code expired'}
-        except SessionPasswordNeededError:
-            return {'status': 'error', 'message': '2FA password required', 'requires_password': True}
+        try: return self._run_async(_sign_in(), timeout=20)
+        except PhoneCodeInvalidError: return {'status': 'error', 'message': 'Invalid code'}
+        except PhoneCodeExpiredError: return {'status': 'error', 'message': 'Code expired'}
+        except SessionPasswordNeededError: return {'status': 'error', 'message': '2FA password required', 'requires_password': True}
         except Exception as e:
             logger.exception('verify_code failed', extra={'account_phone': account.phone})
             return {'status': 'error', 'message': str(e)}
 
     def _classify_error(self, exc):
-        if isinstance(exc, FloodWaitError):
-            return True, 'FloodWaitError'
-        if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
-            return True, 'ConnectionError'
-        if isinstance(exc, RPCError):
-            return True, type(exc).__name__
+        if isinstance(exc, FloodWaitError): return True, 'FloodWaitError'
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError)): return True, 'ConnectionError'
+        if isinstance(exc, RPCError): return True, type(exc).__name__
         return False, type(exc).__name__
 
     def send_message_sync(self, account, recipient_id, message, retries=3, base_delay=2.0, campaign_id=None, recipient_db_id=None):
-        extra_base = {
-            'account_phone': account.phone,
-            'campaign_id': campaign_id,
-            'recipient_id': recipient_db_id,
-        }
-
+        extra_base = {'account_phone': account.phone, 'campaign_id': campaign_id, 'recipient_id': recipient_db_id}
         for attempt in range(1, retries + 1):
             try:
                 client = self.get_client(account)
                 if not client:
-                    if attempt == retries:
-                        return {'status': 'error', 'message': 'Client not available', 'permanent': False, 'attempt': attempt}
-                    time.sleep(base_delay * attempt)
-                    continue
+                    if attempt == retries: return {'status': 'error', 'message': 'Client not available', 'permanent': False, 'attempt': attempt}
+                    time.sleep(base_delay * attempt); continue
 
                 async def _send():
                     entity = await client.get_entity(recipient_id)
@@ -254,56 +206,31 @@ class TelegramService:
                     return entity, result
 
                 entity, result = self._run_async(_send(), timeout=20)
-                telegram_user_id = entity.id if hasattr(entity, 'id') else None
-
-                return {
-                    'status': 'success',
-                    'result': result,
-                    'telegram_message_id': result.id,
-                    'telegram_user_id': telegram_user_id,
-                }
-
+                return {'status': 'success', 'result': result, 'telegram_message_id': result.id, 'telegram_user_id': entity.id if hasattr(entity, 'id') else None}
             except FloodWaitError as e:
                 wait = min(e.seconds, 120)
-                logger.warning('FloodWait during send', extra={**extra_base, 'status': 'flood_wait', 'wait_seconds': wait, 'attempt': attempt})
-                time.sleep(wait)
-                continue
+                time.sleep(wait); continue
             except Exception as e:
                 is_transient, label = self._classify_error(e)
-                logger.error('Send attempt failed', exc_info=True, extra={**extra_base, 'status': 'failed', 'error_type': label, 'attempt': attempt, 'is_transient': is_transient})
-                if not is_transient or attempt == retries:
-                    return {'status': 'error', 'message': str(e), 'permanent': not is_transient, 'attempt': attempt, 'error_type': label}
-                backoff = base_delay * (2 ** (attempt - 1)) + (0.1 * attempt)
-                time.sleep(backoff)
-
+                if not is_transient or attempt == retries: return {'status': 'error', 'message': str(e), 'permanent': not is_transient, 'attempt': attempt, 'error_type': label}
+                time.sleep(base_delay * (2 ** (attempt - 1)))
         return {'status': 'error', 'message': 'All retries exhausted', 'permanent': True, 'attempt': retries}
 
     def fetch_dialogs_sync(self, account):
         async def _fetch():
             client = await self._ensure_connected(account)
-            if not client:
-                return []
-            dialogs = await client.get_dialogs(limit=None)
-            return dialogs
-        try:
-            return self._run_async(_fetch(), timeout=20)
-        except Exception as e:
-            logger.error('Fetch dialogs failed', exc_info=True, extra={'account_phone': account.phone})
-            return []
+            if not client: return []
+            return await client.get_dialogs(limit=None)
+        try: return self._run_async(_fetch(), timeout=20)
+        except: return []
 
     def fetch_dialog_messages_sync(self, account, dialog, min_id=0):
         async def _fetch():
             client = await self._ensure_connected(account)
-            if not client:
-                return []
-            messages = []
+            if not client: return []
+            msgs = []
             async for msg in client.iter_messages(dialog, limit=20, min_id=min_id):
-                if msg.out:
-                    continue
-                messages.append(msg)
-            return messages
-        try:
-            return self._run_async(_fetch(), timeout=20)
-        except Exception as e:
-            logger.error('Fetch dialog messages failed', exc_info=True, extra={'account_phone': account.phone})
-            return []
+                if not msg.out: msgs.append(msg)
+            return msgs
+        try: return self._run_async(_fetch(), timeout=20)
+        except: return []
