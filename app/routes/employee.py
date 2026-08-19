@@ -37,7 +37,6 @@ def conversations():
     convs = db.session.query(Conversation).filter_by(employee_id=current_user.id, is_active=True).order_by(Conversation.last_message_at.desc()).all()
     return jsonify([{
         'id': c.id,
-        'recipient_phone': c.recipient.phone,
         'recipient_username': c.recipient.username,
         'unread_count': c.unread_count,
         'last_message_at': c.last_message_at.isoformat() if c.last_message_at else None,
