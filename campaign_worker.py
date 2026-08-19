@@ -30,6 +30,13 @@ def update_heartbeat(status, error=None):
         logger.error(f"Failed to update heartbeat: {e}")
         db.session.rollback()
 
+def reset_stuck_recipients():
+    """Reset any recipients stuck in 'sending' state from previous worker crashes."""
+    stuck = db.session.query(Recipient).filter_by(status='sending').all()
+    for r in stuck:
+        r.status = 'pending'
+    db.session.commit()
+
 def reset_daily_limits():
     now = datetime.utcnow()
     campaigns = db.session.query(Campaign).filter(Campaign.status.in_(['paused', 'running'])).all()
@@ -80,12 +87,11 @@ def process_campaign(campaign, telegram):
     rec_id, username = claimed
     recipient = db.session.get(Recipient, rec_id)
     
-    # Use verified, active accounts. Relaxed health check to include 'unknown' and 'healthy'
+    # Relax health check: use any active, verified account that is under its daily limit
     account = db.session.query(TelegramAccount).filter(
         TelegramAccount.id.in_([a.id for a in campaign.selected_accounts]),
         TelegramAccount.is_active == True,
         TelegramAccount.is_verified == True,
-        TelegramAccount.health_status.in_(['healthy', 'unknown']),
         TelegramAccount.daily_sent < TelegramAccount.daily_limit
     ).order_by(TelegramAccount.last_used.asc().nullsfirst()).first()
 
@@ -93,7 +99,7 @@ def process_campaign(campaign, telegram):
         recipient.status = 'pending' # Revert to pending
         db.session.commit()
         campaign.status = 'paused'
-        campaign.pause_reason = 'no_healthy_accounts'
+        campaign.pause_reason = 'no_available_accounts'
         db.session.commit()
         return
 
@@ -141,6 +147,7 @@ def run():
     telegram = TelegramService()
     with app.app_context():
         telegram.init_all_clients()
+        reset_stuck_recipients() # Clean up any stuck sends from previous runs
         logger.info("Campaign Worker started.")
         while True:
             try:
