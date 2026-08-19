@@ -8,14 +8,8 @@
                 <p class="text-muted">Enter the code sent to your Telegram app.</p>
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label>Telegram Code</label>
-                        <input type="text" name="code" class="form-control form-control-lg text-center" pattern="[0-9]{5}" maxlength="5" required autofocus>
-                    </div>
-                    <div class="mb-3">
-                        <label>2FA Password (if enabled)</label>
-                        <input type="password" name="password" class="form-control">
-                    </div>
+                    <div class="mb-3"><label>Telegram Code</label><input type="text" name="code" class="form-control form-control-lg text-center" pattern="[0-9]{5}" maxlength="5" required autofocus></div>
+                    <div class="mb-3"><label>2FA Password (if enabled)</label><input type="password" name="password" class="form-control"></div>
                     <button class="btn btn-success w-100">Verify</button>
                 </form>
                 <a href="{{ url_for('admin.accounts') }}" class="btn btn-link mt-2">Cancel</a>
