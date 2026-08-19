@@ -1,8 +1,10 @@
 from flask import (Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app)
 from flask_login import login_required, current_user
-from app.extensions import db
+from datetime import datetime
+from app.extensions import db, socketio
 from app.models import Campaign, Conversation, Message, Recipient
 from app.services.campaign_service import get_campaign_stats
+from app.services.telegram_service import TelegramService
 
 employee_bp = Blueprint('employee', __name__)
 
@@ -67,13 +69,46 @@ def send_reply(conv_id):
     if not content:
         return jsonify({'error': 'Empty message'}), 400
 
-    sender = current_app.bg_sender
-    success, message = sender.send_employee_reply(conv_id, content, current_user.id)
+    recipient = conv.recipient
+    account = recipient.account
+    if not account:
+        return jsonify({'error': 'No sending account found'}), 400
 
-    if success:
-        return jsonify({'status': 'sent', 'message': message})
+    if not recipient.user_id:
+        return jsonify({'error': 'Cannot reply: Recipient user_id is missing (initial message may have failed)'}), 400
+
+    # Use TelegramService directly to send the message
+    tg = TelegramService()
+    result = tg.send_message_sync(
+        account=account, 
+        recipient_id=recipient.user_id, 
+        message=content,
+        campaign_id=recipient.campaign_id, 
+        recipient_db_id=recipient.id
+    )
+
+    if result['status'] == 'success':
+        msg = Message(
+            conversation_id=conv_id, 
+            sender='employee', 
+            content=content, 
+            telegram_message_id=result.get('telegram_message_id')
+        )
+        db.session.add(msg)
+        conv.last_message_at = datetime.utcnow()
+        db.session.commit()
+
+        # Emit the message via Socket.IO
+        socketio.emit('new_reply', {
+            'conversation_id': conv_id, 
+            'sender': 'employee', 
+            'content': content,
+            'timestamp': msg.timestamp.isoformat(),
+        }, room=f'user_{conv.employee_id}')
+        
+        return jsonify({'status': 'sent', 'message': 'Sent'})
     else:
-        return jsonify({'error': message}), 500
+        return jsonify({'error': result.get('message', 'Send failed')}), 500
 
 @employee_bp.route('/conversation/<int:conv_id>/mark-read', methods=['POST'])
 def mark_read(conv_id):
