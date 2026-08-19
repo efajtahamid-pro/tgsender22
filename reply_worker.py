@@ -30,12 +30,18 @@ def run():
         while True:
             try:
                 update_heartbeat('running')
-                accounts = db.session.query(TelegramAccount).filter_by(is_active=True, is_verified=True, health_status='healthy').all()
+                
+                # Poll ALL active and verified accounts, regardless of health_status
+                accounts = db.session.query(TelegramAccount).filter_by(is_active=True, is_verified=True).all()
+                
                 for account in accounts:
                     dialogs = telegram.fetch_dialogs_sync(account)
                     if not dialogs: continue
                     
-                    recipients = db.session.query(Recipient).filter(Recipient.assigned_account_id == account.id, Recipient.user_id.isnot(None)).all()
+                    recipients = db.session.query(Recipient).filter(
+                        Recipient.assigned_account_id == account.id, 
+                        Recipient.user_id.isnot(None)
+                    ).all()
                     peer_to_recipient = {str(r.user_id): r for r in recipients}
 
                     for dialog in dialogs:
@@ -53,29 +59,52 @@ def run():
                             conv = recipient.conversation
                             if not conv:
                                 conv = Conversation(recipient_id=recipient.id, campaign_id=recipient.campaign_id, employee_id=recipient.campaign.employee_id)
-                                db.session.add(conv); db.session.flush()
+                                db.session.add(conv)
+                                db.session.flush()
 
                             if db.session.query(Message).filter_by(telegram_message_id=msg.id).first(): continue
 
-                            db_msg = Message(conversation_id=conv.id, sender='recipient', content=msg.text or '', telegram_message_id=msg.id, timestamp=msg.date.replace(tzinfo=None) if hasattr(msg.date, 'tzinfo') else datetime.utcnow())
+                            db_msg = Message(
+                                conversation_id=conv.id, 
+                                sender='recipient', 
+                                content=msg.text or '', 
+                                telegram_message_id=msg.id, 
+                                timestamp=msg.date.replace(tzinfo=None) if hasattr(msg.date, 'tzinfo') else datetime.utcnow()
+                            )
                             db.session.add(db_msg)
 
-                            conv.unread_count += 1; conv.last_message_at = datetime.utcnow()
-                            recipient.status = 'replied'; recipient.replied_at = datetime.utcnow()
+                            conv.unread_count += 1
+                            conv.last_message_at = datetime.utcnow()
+                            recipient.status = 'replied'
+                            recipient.replied_at = datetime.utcnow()
 
                             if not checkpoint:
                                 checkpoint = ReplyCheckpoint(account_id=account.id, dialog_id=dialog.id, last_message_id=msg.id)
                                 db.session.add(checkpoint)
-                            else: checkpoint.last_message_id = max(checkpoint.last_message_id, msg.id)
+                            else:
+                                checkpoint.last_message_id = max(checkpoint.last_message_id, msg.id)
 
                             db.session.commit()
-                            socketio.emit('new_reply', {'conversation_id': conv.id, 'employee_id': conv.employee_id, 'content': msg.text or '', 'sender': 'recipient', 'timestamp': db_msg.timestamp.isoformat()}, room=f'user_{conv.employee_id}')
-                            socketio.emit('recipient_update', {'campaign_id': recipient.campaign_id, 'recipient_id': recipient.id, 'status': 'replied'}, room=f'campaign_{recipient.campaign_id}')
+
+                            socketio.emit('new_reply', {
+                                'conversation_id': conv.id, 
+                                'employee_id': conv.employee_id, 
+                                'content': msg.text or '', 
+                                'sender': 'recipient', 
+                                'timestamp': db_msg.timestamp.isoformat()
+                            }, room=f'user_{conv.employee_id}')
+
+                            socketio.emit('recipient_update', {
+                                'campaign_id': recipient.campaign_id, 
+                                'recipient_id': recipient.id, 
+                                'status': 'replied'
+                            }, room=f'campaign_{recipient.campaign_id}')
 
                 time.sleep(15)
             except Exception as e:
                 logger.exception("Reply worker crashed")
-                update_heartbeat('error', str(e)); time.sleep(30)
+                update_heartbeat('error', str(e))
+                time.sleep(30)
 
 if __name__ == '__main__':
     run()
