@@ -5,8 +5,8 @@ from flask import current_app
 
 def assign_proxy_to_account(account):
     """
-    Assigns the least-loaded active and healthy proxy to a new account.
-    Uses a bounded retry loop to handle race conditions safely.
+    Assigns the least-loaded active proxy to a new account.
+    Proxies with status 'healthy' or 'unknown' are eligible.
     """
     max_retries = 3
     max_capacity = current_app.config.get('MAX_ACCOUNTS_PER_PROXY', 5)
@@ -19,7 +19,8 @@ def assign_proxy_to_account(account):
             TelegramAccount, Proxy.id == TelegramAccount.proxy_id
         ).filter(
             Proxy.is_active.is_(True),
-            Proxy.health_status == 'healthy'
+            # FIX: Allow 'unknown' so new proxies can be used immediately
+            Proxy.health_status.in_(['healthy', 'unknown'])
         ).group_by(
             Proxy.id
         ).having(
@@ -29,7 +30,7 @@ def assign_proxy_to_account(account):
         ).limit(1).scalar()
         
         if not proxy_id:
-            return False, None, "No active and healthy proxies with available capacity."
+            return False, None, "No active proxies with available capacity. Add more proxies."
 
         # 2. Lock the proxy row (Requires PostgreSQL for true row-level locking)
         proxy = db.session.query(Proxy).filter_by(id=proxy_id).with_for_update().first()
@@ -38,6 +39,6 @@ def assign_proxy_to_account(account):
         current_count = db.session.query(TelegramAccount).filter_by(proxy_id=proxy.id).count()
         if current_count < max_capacity:
             account.proxy_id = proxy.id
-            return True, proxy, "Assigned to healthy proxy."
+            return True, proxy, "Assigned to proxy."
             
     return False, None, "Failed to assign proxy after multiple retries due to high contention."
