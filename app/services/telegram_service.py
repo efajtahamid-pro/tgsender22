@@ -176,10 +176,15 @@ class TelegramService:
             return result.phone_code_hash
 
         try:
-            hash_val = self._run_async(_send(), timeout=20)
+            # FIX: Increased timeout to 30s to handle slow proxy connections
+            hash_val = self._run_async(_send(), timeout=30)
             return {'status': 'success', 'phone_code_hash': hash_val}
         except FloodWaitError as e:
             return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
+        except TimeoutError:
+            # FIX: Clear error message for the UI when Telegram blocks the IP or proxy is dead
+            logger.error('send_code timed out for account %s', account.phone)
+            return {'status': 'error', 'message': 'Connection timed out. Render IPs are blocked by Telegram. You MUST assign a working proxy to this account.'}
         except Exception as e:
             logger.exception('send_code failed', extra={'account_phone': account.phone})
             return {'status': 'error', 'message': str(e)}
@@ -296,7 +301,6 @@ class TelegramService:
             msgs = []
             async for msg in client.iter_messages(dialog, limit=20, min_id=min_id):
                 if not msg.out:
-                    # FIX: Ensure the sender entity is loaded so we can check their username
                     if not msg.sender:
                         try:
                             await msg.get_sender()
