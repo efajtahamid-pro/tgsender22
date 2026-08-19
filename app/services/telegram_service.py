@@ -34,7 +34,14 @@ class TelegramService:
     def __init__(self):
         if self._initialized:
             return
-        self.api_id = int(os.getenv('API_ID', 0))
+        
+        # FIX: Safe parsing of API_ID to prevent background worker crashes
+        try:
+            self.api_id = int(os.getenv('API_ID', 0))
+        except (ValueError, TypeError):
+            self.api_id = 0
+            logger.error("Invalid API_ID in environment variables. Must be an integer.")
+            
         self.api_hash = os.getenv('API_HASH', '')
         self.clients = {}
         self._client_locks = {}
@@ -61,7 +68,6 @@ class TelegramService:
 
     async def _build_client(self, account):
         proxy = self._get_proxy(account.proxy)
-        # FIX: decrypt session string on read
         session_string = decrypt_session(account.session_string) if account.session_string else ''
         session = StringSession(session_string)
         client = TelegramClient(
@@ -94,7 +100,6 @@ class TelegramService:
             return client
 
     def init_all_clients(self):
-        """Pre-connect all active, verified accounts. Called on worker startup."""
         with db.session.no_autoflush:
             accounts = db.session.query(TelegramAccount).filter_by(is_active=True, is_verified=True).all()
         for acc in accounts:
@@ -166,7 +171,6 @@ class TelegramService:
             )
             await client.connect()
             result = await client.send_code_request(account.phone)
-            # FIX: encrypt session string on write
             account.session_string = encrypt_session(client.session.save())
             db.session.commit()
             self.clients[account.id] = client
@@ -197,10 +201,8 @@ class TelegramService:
                     return {'status': 'error', 'message': '2FA password required', 'requires_password': True}
 
             if await client.is_user_authorized():
-                # FIX: encrypt session string on write
                 account.session_string = encrypt_session(client.session.save())
                 account.is_verified = True
-                # FIX: removed account.is_healthy = True (no such column)
                 account.health_status = 'healthy'
                 account.last_successful_connection = datetime.utcnow()
                 db.session.commit()
@@ -221,12 +223,10 @@ class TelegramService:
             return {'status': 'error', 'message': str(e)}
 
     def _classify_error(self, exc):
-        """Returns (is_transient, error_label)."""
         if isinstance(exc, FloodWaitError):
             return True, 'FloodWaitError'
         if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
             return True, 'ConnectionError'
-        # FIX: added permanent errors for bad usernames/peers
         if isinstance(exc, (UsernameNotOccupiedError, UsernameInvalidError)):
             return False, 'UsernameInvalid'
         if isinstance(exc, PeerIdInvalidError):
@@ -237,12 +237,6 @@ class TelegramService:
 
     def send_message_sync(self, account, target, message, retries=3, base_delay=2.0,
                           campaign_id=None, recipient_db_id=None):
-        """
-        Send a message to a Telegram user.
-
-        Args:
-            target: Username (str, without @) or Telegram user ID (int).
-        """
         extra_base = {'account_phone': account.phone, 'campaign_id': campaign_id, 'recipient_id': recipient_db_id}
 
         for attempt in range(1, retries + 1):
