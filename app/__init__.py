@@ -11,33 +11,25 @@ from app.logging_config import configure_logging
 from app.errors import register_error_handlers
 
 def create_app(config_name=None):
-    """Application factory pattern."""
     if config_name is None:
         config_name = os.getenv('APP_ENV', 'development')
 
     app = Flask(__name__)
     app.config.from_object(config_map[config_name])
 
-    # Fix Render's 'postgres://' format to 'postgresql://' for SQLAlchemy
     db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
     if db_uri.startswith('postgres://'):
         db_uri = db_uri.replace('postgres://', 'postgresql://', 1)
         app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
 
-    # Configure Database Engine Options dynamically
     if 'sqlite' in db_uri:
-        # SQLite requires NullPool and check_same_thread=False for background workers
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
             'poolclass': NullPool,
             'connect_args': {'check_same_thread': False}
         }
     else:
-        # PostgreSQL uses standard QueuePool
-        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-            'pool_pre_ping': True
-        }
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 
-    # Initialize extensions
     db.init_app(app)
     login_manager.init_app(app)
     migrate.init_app(app, db)
@@ -45,19 +37,11 @@ def create_app(config_name=None):
     cors.init_app(app)
     bcrypt.init_app(app)
     limiter.init_app(app)
-    socketio.init_app(
-        app,
-        async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'threading'),
-        cors_allowed_origins='*'
-    )
+    socketio.init_app(app, async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'threading'), cors_allowed_origins='*')
 
-    # Configure structured JSON logging
     configure_logging(app)
-
-    # Register custom error handlers
     register_error_handlers(app)
 
-    # SQLite WAL Mode setup (Only applies if using SQLite)
     if 'sqlite' in db_uri:
         with app.app_context():
             @event.listens_for(db.engine, 'connect')
@@ -67,17 +51,14 @@ def create_app(config_name=None):
                 cursor.execute('PRAGMA synchronous=NORMAL')
                 cursor.close()
 
-    # User loader for Flask-Login
     @login_manager.user_loader
     def load_user(user_id):
         from app.models import User
         return db.session.get(User, int(user_id))
 
-    # Create tables and default admin
     with app.app_context():
         _create_tables_and_admin(app)
 
-    # Register Blueprints
     from app.routes.auth import auth_bp
     from app.routes.admin import admin_bp
     from app.routes.employee import employee_bp
@@ -88,37 +69,28 @@ def create_app(config_name=None):
     app.register_blueprint(admin_bp, url_prefix='/admin')
     app.register_blueprint(employee_bp, url_prefix='/employee')
     app.register_blueprint(api_bp, url_prefix='/api')
-
     register_socket_handlers(socketio)
 
-    # Health check endpoint for monitoring
     @app.route('/health')
     def health_check():
         try:
             db.session.execute(db.text('SELECT 1'))
             return jsonify({'status': 'healthy', 'database': 'connected'}), 200
         except Exception as e:
-            app.logger.error('Health check failed', exc_info=True)
             return jsonify({'status': 'unhealthy', 'error': str(e)}), 503
 
     return app
 
 def _create_tables_and_admin(app):
-    """Create database tables and default admin user if not exists."""
     from app.models import User
     db.create_all()
-
     if not db.session.query(User).filter_by(username=app.config['ADMIN_USERNAME']).first():
         admin = User(
             username=app.config['ADMIN_USERNAME'],
             email=app.config['ADMIN_EMAIL'],
             password_hash=generate_password_hash(app.config['ADMIN_PASSWORD']),
-            role='admin',
-            is_active=True,
-            can_add_proxies=True,
-            can_add_numbers=True,
-            can_handle_replies=True,
+            role='admin', is_active=True,
+            can_add_proxies=True, can_add_numbers=True, can_handle_replies=True,
         )
         db.session.add(admin)
         db.session.commit()
-        app.logger.info('Admin user created', extra={'user_id': admin.id})
