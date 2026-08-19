@@ -176,13 +176,11 @@ class TelegramService:
             return result.phone_code_hash
 
         try:
-            # FIX: Increased timeout to 30s to handle slow proxy connections
             hash_val = self._run_async(_send(), timeout=30)
             return {'status': 'success', 'phone_code_hash': hash_val}
         except FloodWaitError as e:
             return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
         except TimeoutError:
-            # FIX: Clear error message for the UI when Telegram blocks the IP or proxy is dead
             logger.error('send_code timed out for account %s', account.phone)
             return {'status': 'error', 'message': 'Connection timed out. Render IPs are blocked by Telegram. You MUST assign a working proxy to this account.'}
         except Exception as e:
@@ -253,17 +251,24 @@ class TelegramService:
                     time.sleep(base_delay * attempt)
                     continue
 
+                # FIX: Removed client.get_entity() to prevent network timeouts. 
+                # Telethon natively accepts integers (user_id) or strings (@username) in send_message.
                 async def _send():
-                    entity = await client.get_entity(target)
-                    result = await client.send_message(entity, message)
-                    return entity, result
+                    result = await client.send_message(target, message)
+                    # Extract the ID safely from the result object
+                    t_id = None
+                    if hasattr(result, 'peer_id') and hasattr(result.peer_id, 'user_id'):
+                        t_id = result.peer_id.user_id
+                    elif hasattr(result, 'peer_id') and hasattr(result.peer_id, 'chat_id'):
+                        t_id = result.peer_id.chat_id
+                    return result, t_id
 
-                entity, result = self._run_async(_send(), timeout=20)
+                result, t_id = self._run_async(_send(), timeout=30)
                 return {
                     'status': 'success',
                     'result': result,
                     'telegram_message_id': result.id,
-                    'telegram_user_id': entity.id if hasattr(entity, 'id') else None
+                    'telegram_user_id': t_id
                 }
             except FloodWaitError as e:
                 wait = min(e.seconds, 120)
