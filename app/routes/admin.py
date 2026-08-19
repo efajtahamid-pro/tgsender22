@@ -143,14 +143,14 @@ def delete_proxy(id):
 def accounts():
     max_capacity = current_app.config.get('MAX_ACCOUNTS_PER_PROXY', 5)
     
-    # FIX: Removed N+1 query. Checks for any proxy with capacity in a single aggregate query.
+    # FIX: Include 'unknown' status so new proxies can be used immediately before testing
     capacity_count = db.session.query(
         func.count(Proxy.id)
     ).outerjoin(
         TelegramAccount, Proxy.id == TelegramAccount.proxy_id
     ).filter(
         Proxy.is_active.is_(True),
-        Proxy.health_status == 'healthy'
+        Proxy.health_status.in_(['healthy', 'unknown'])
     ).group_by(
         Proxy.id
     ).having(
@@ -175,7 +175,6 @@ def add_single_account():
             if not ok:
                 flash(msg, 'danger')
             else:
-                # Assignment is done on the object, commit happens here as one transaction
                 db.session.add(acc)
                 db.session.commit()
                 flash(f'Account added! {msg}', 'success')
@@ -490,8 +489,13 @@ def health_dashboard():
 @admin_bp.route('/proxy/<int:id>/test', methods=['POST'])
 def test_proxy(id):
     proxy = db.session.get(Proxy, id)
+    # FIX: Prevent 500 crash if user clicks test on a proxy that was just deleted
+    if not proxy:
+        return jsonify({'status': 'unhealthy', 'latency': 0, 'error': 'Proxy not found in database'}), 404
+        
     proxy.health_status = 'testing'
     db.session.commit()
+    
     ok, latency, err = TelegramService().test_proxy_connection(proxy)
     proxy.last_checked_at = datetime.utcnow()
     if ok:
@@ -511,6 +515,9 @@ def test_proxy(id):
 @admin_bp.route('/account/<int:id>/test', methods=['POST'])
 def test_account(id):
     acc = db.session.get(TelegramAccount, id)
+    if not acc:
+        return jsonify({'status': 'unhealthy', 'message': 'Account not found'}), 404
+        
     ok, msg = TelegramService().test_account_health(acc)
     acc.last_health_check = datetime.utcnow()
     acc.health_status = 'healthy' if ok else 'disconnected'
