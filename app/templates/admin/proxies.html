@@ -68,6 +68,8 @@
 </div></div></div>
 <div class="modal fade" id="bulkModal"><div class="modal-dialog"><div class="modal-content border-0 shadow">
     <form method="POST" action="{{ url_for('admin.batch_add_proxies') }}" enctype="multipart/form-data">
+        <!-- FIX: Added missing CSRF token -->
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-header bg-primary text-white border-0"><h5 class="modal-title"><i class="bi bi-upload me-2"></i> Bulk Add Proxies</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
         <div class="modal-body"><p class="text-muted">Upload a CSV file with headers: host, port, username, password, type</p><input type="file" name="file" class="form-control" accept=".csv" required></div>
         <div class="modal-footer border-0"><button type="submit" class="btn btn-primary w-100 py-2">Upload CSV</button></div>
