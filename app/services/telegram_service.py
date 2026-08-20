@@ -6,7 +6,6 @@ import socks
 import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.network.connection import ConnectionTcpObfuscated
 from telethon.errors import (
     FloodWaitError, PhoneCodeInvalidError, PhoneCodeExpiredError,
     SessionPasswordNeededError, RPCError, UsernameNotOccupiedError,
@@ -61,6 +60,8 @@ class TelegramService:
             logger.warning("No proxy assigned to account. Attempting direct connection (will likely fail on cloud hosts).")
             return None
         
+        # FIX: Telethon/PySocks expects the integer constant (e.g., socks.SOCKS5), not the string 'socks5'.
+        # If we pass the string, Telethon silently ignores it and connects directly, causing the TimeoutError.
         p_type = proxy.proxy_type
         if p_type == 'socks5':
             p_type = socks.SOCKS5
@@ -82,9 +83,9 @@ class TelegramService:
         session = StringSession(session_string)
         client = TelegramClient(
             session, self.api_id, self.api_hash,
-            connection=ConnectionTcpObfuscated, # FIX: Use obfuscated connection to bypass proxy DPI blocks
+            # FIX: Removed ConnectionTcpObfuscated. Standard connection works best with Webshare.
             proxy=proxy, 
-            timeout=60, # FIX: Increased timeout to handle slow proxies
+            timeout=60, # Increased timeout to handle slow proxies
             connection_retries=3, 
             retry_delay=2
         )
@@ -181,9 +182,9 @@ class TelegramService:
             proxy = self._get_proxy(account.proxy)
             client = TelegramClient(
                 StringSession(), self.api_id, self.api_hash,
-                connection=ConnectionTcpObfuscated, # FIX: Use obfuscated connection
+                # FIX: Removed ConnectionTcpObfuscated
                 proxy=proxy, 
-                timeout=60, # FIX: Increased timeout
+                timeout=60, 
                 connection_retries=3, 
                 retry_delay=2
             )
@@ -202,7 +203,7 @@ class TelegramService:
             return {'status': 'error', 'message': f'Flood wait: {e.seconds}s'}
         except TimeoutError:
             logger.error('send_code timed out for account %s', account.phone)
-            return {'status': 'error', 'message': 'Connection timed out. The proxy is too slow or blocking Telegram MTProto traffic. Try a different proxy.'}
+            return {'status': 'error', 'message': 'Connection timed out. The proxy is either dead, too slow, or blocking Telegram MTProto traffic. Try a different proxy.'}
         except Exception as e:
             logger.exception('send_code failed', extra={'account_phone': account.phone})
             return {'status': 'error', 'message': str(e)}
@@ -271,8 +272,11 @@ class TelegramService:
                     time.sleep(base_delay * attempt)
                     continue
 
+                # FIX: Removed client.get_entity() to prevent network timeouts. 
+                # Telethon natively accepts integers (user_id) or strings (@username) in send_message.
                 async def _send():
                     result = await client.send_message(target, message)
+                    # Extract the ID safely from the result object
                     t_id = None
                     if hasattr(result, 'peer_id') and hasattr(result.peer_id, 'user_id'):
                         t_id = result.peer_id.user_id
